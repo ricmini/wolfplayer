@@ -1,6 +1,8 @@
-// Netlify Function - proxy simples para buscar M3U/Xtream sem bloqueio de CORS
+// Netlify Function - proxy para M3U/Xtream E para segmentos de vídeo (texto ou binário)
 exports.handler = async (event) => {
   const targetUrl = event.queryStringParameters && event.queryStringParameters.url;
+  const customUa = event.queryStringParameters && event.queryStringParameters.ua;
+  const userAgent = customUa && customUa.trim() ? customUa.trim() : 'VLC/3.0.18 LibVLC/3.0.18';
 
   if (!targetUrl) {
     return {
@@ -12,7 +14,7 @@ exports.handler = async (event) => {
 
   try {
     const res = await fetch(targetUrl, {
-      headers: { 'User-Agent': 'Mozilla/5.0 (IPTV Player Proxy)' }
+      headers: { 'User-Agent': userAgent }
     });
 
     if (!res.ok) {
@@ -23,15 +25,46 @@ exports.handler = async (event) => {
       };
     }
 
-    const body = await res.text();
+    const contentType = res.headers.get('content-type') || 'application/octet-stream';
+    const arrayBuffer = await res.arrayBuffer();
+    const buffer = Buffer.from(arrayBuffer);
+
+    // Playlists m3u8 são texto; segmentos .ts/.aac/etc são binário — decide como devolver
+    const isText = contentType.includes('mpegurl') || contentType.includes('text') || targetUrl.includes('.m3u8');
+
+    if (isText) {
+      let text = buffer.toString('utf-8');
+      // Reescreve URLs relativas/absolutas dentro do m3u8 para passarem pelo mesmo proxy
+      const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
+      const selfBase = `/.netlify/functions/proxy?ua=${encodeURIComponent(userAgent)}&url=`;
+      text = text.split('\n').map(line => {
+        const trimmed = line.trim();
+        if (!trimmed || trimmed.startsWith('#')) return line;
+        let absolute = trimmed;
+        if (!/^https?:\/\//i.test(trimmed)) {
+          absolute = new URL(trimmed, baseUrl).toString();
+        }
+        return selfBase + encodeURIComponent(absolute);
+      }).join('\n');
+
+      return {
+        statusCode: 200,
+        headers: {
+          'Access-Control-Allow-Origin': '*',
+          'Content-Type': 'application/vnd.apple.mpegurl; charset=utf-8'
+        },
+        body: text
+      };
+    }
 
     return {
       statusCode: 200,
       headers: {
         'Access-Control-Allow-Origin': '*',
-        'Content-Type': 'text/plain; charset=utf-8'
+        'Content-Type': contentType
       },
-      body
+      body: buffer.toString('base64'),
+      isBase64Encoded: true
     };
   } catch (err) {
     return {
