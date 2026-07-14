@@ -209,21 +209,21 @@ let state = {
   hls: null
 };
 
-// ---------- Storage helpers ----------
+// ---------- Storage helpers (localStorage - funciona em qualquer site publicado) ----------
 async function storeGet(key){
   try{
-    const r = await window.storage.get(key, false);
-    return r ? JSON.parse(r.value) : null;
-  }catch(e){ return null; }
+    const v = localStorage.getItem(key);
+    return v ? JSON.parse(v) : null;
+  }catch(e){ console.error('storage get failed', e); return null; }
 }
 async function storeSet(key, value){
   try{
-    await window.storage.set(key, JSON.stringify(value), false);
+    localStorage.setItem(key, JSON.stringify(value));
     return true;
   }catch(e){ console.error('storage set failed', e); return false; }
 }
 async function storeDelete(key){
-  try{ await window.storage.delete(key, false); }catch(e){}
+  try{ localStorage.removeItem(key); }catch(e){ console.error('storage delete failed', e); }
 }
 
 // ---------- Init ----------
@@ -252,6 +252,18 @@ function updateAddForm(){
 }
 
 // ---------- M3U Parsing ----------
+function detectContentType(url, group){
+  const lower = url.toLowerCase();
+  if(lower.includes('/movie/')) return 'movie';
+  if(lower.includes('/series/')) return 'series';
+  if(lower.includes('/live/')) return 'live';
+  // fallback: tenta pelo nome do grupo (comum em listas que usam nomenclatura PT/EN)
+  const g = (group || '').toLowerCase();
+  if(/filme|movie|vod/.test(g)) return 'movie';
+  if(/s[ée]rie|series/.test(g)) return 'series';
+  return 'live';
+}
+
 function parseM3U(text){
   const lines = text.split(/\r?\n/);
   const channels = [];
@@ -269,11 +281,25 @@ function parseM3U(text){
     } else if(!line.startsWith('#') && current){
       current.url = line;
       current.key = (current.tvgId || current.name) + '|' + current.url;
+      current.contentType = detectContentType(current.url, current.group);
       channels.push(current);
       current = null;
     }
   }
   return channels;
+}
+
+function tryParseXtreamFromM3uUrl(url){
+  try{
+    const u = new URL(url);
+    const user = u.searchParams.get('username');
+    const pass = u.searchParams.get('password');
+    if(!user || !pass) return null;
+    const host = `${u.protocol}//${u.host}`;
+    return { host, user, pass };
+  }catch(e){
+    return null;
+  }
 }
 
 function buildXtreamM3U(host, user, pass){
@@ -392,9 +418,24 @@ async function handleAddList(){
     } else if(srcType === 'm3uUrl'){
       const url = document.getElementById('m3uUrl').value.trim();
       if(!url) throw new Error('Informe a URL do M3U.');
-      const text = await fetchAsText(url, userAgent);
-      channels = parseM3U(text);
-      source = {type:'m3uUrl', url, userAgent};
+      const xtreamParsed = tryParseXtreamFromM3uUrl(url);
+      if(xtreamParsed){
+        // A URL é de um servidor Xtream (tem username/password) - tenta a API completa,
+        // que já separa Ao vivo/Filmes/Séries e traz datas de adição.
+        try{
+          channels = await fetchXtreamFull(xtreamParsed.host, xtreamParsed.user, xtreamParsed.pass, userAgent);
+          if(channels.length === 0) throw new Error('API não retornou conteúdo');
+          source = {type:'xtream', host:xtreamParsed.host, user:xtreamParsed.user, pass:xtreamParsed.pass, userAgent};
+        }catch(apiErr){
+          const text = await fetchAsText(url, userAgent);
+          channels = parseM3U(text);
+          source = {type:'m3uUrl', url, userAgent};
+        }
+      } else {
+        const text = await fetchAsText(url, userAgent);
+        channels = parseM3U(text);
+        source = {type:'m3uUrl', url, userAgent};
+      }
     } else if(srcType === 'xtream'){
       const host = document.getElementById('xtHost').value.trim();
       const user = document.getElementById('xtUser').value.trim();
@@ -408,7 +449,6 @@ async function handleAddList(){
         const url = buildXtreamM3U(host, user, pass);
         const text = await fetchAsText(url, userAgent);
         channels = parseM3U(text);
-        channels.forEach(c => { c.contentType = 'live'; });
       }
       source = {type:'xtream', host, user, pass, userAgent};
     }
@@ -842,7 +882,6 @@ async function refreshCurrentList(){
         const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
         const text = await fetchAsText(url, list.source.userAgent);
         newChannels = parseM3U(text);
-        newChannels.forEach(c => { c.contentType = 'live'; });
       }
     } else {
       alert('Listas coladas manualmente não podem ser verificadas automaticamente. Adicione novamente colando o conteúdo atualizado.');
