@@ -349,70 +349,80 @@ async function fetchXtreamJson(host, user, pass, action, userAgent, extra){
 }
 
 // Busca canais Ao Vivo, Filmes e Séries separadamente via API Xtream (traz datas de adição)
-async function fetchXtreamFull(host, user, pass, userAgent){
+// Busca uma lista (live/vod/series), categoria por categoria, para evitar estourar o
+// limite de tempo/tamanho do proxy em listas muito grandes. Retorna também avisos de falhas.
+async function fetchByCategory(host, user, pass, userAgent, categoryAction, itemsAction, mapFn, progressLabel, onProgress){
+  const cats = await fetchXtreamJson(host, user, pass, categoryAction, userAgent);
+  const items = [];
+  const warnings = [];
+  const list = cats || [];
+  for(let i=0;i<list.length;i++){
+    const cat = list[i];
+    if(onProgress) onProgress(`${progressLabel}: ${i+1}/${list.length} (${cat.category_name})`);
+    try{
+      const raw = await fetchXtreamJson(host, user, pass, itemsAction, userAgent, `&category_id=${cat.category_id}`);
+      (raw || []).forEach(it => items.push(mapFn(it, cat.category_name)));
+    }catch(e){
+      warnings.push(`${progressLabel} - categoria "${cat.category_name}": ${e.message}`);
+    }
+  }
+  return { items, warnings };
+}
+
+async function fetchXtreamFull(host, user, pass, userAgent, onProgress){
   const channels = [];
+  const warnings = [];
+  const base = host.replace(/\/+$/,'');
 
   // Ao vivo
   try{
-    const liveCats = await fetchXtreamJson(host, user, pass, 'get_live_categories', userAgent);
-    const catMap = {};
-    (liveCats || []).forEach(c => catMap[c.category_id] = c.category_name);
-    const liveStreams = await fetchXtreamJson(host, user, pass, 'get_live_streams', userAgent);
-    (liveStreams || []).forEach(s => {
-      const group = catMap[s.category_id] || 'Ao vivo';
-      channels.push({
-        name: s.name, logo: s.stream_icon || '',
-        group,
-        language: detectLanguage(group),
-        url: `${host.replace(/\/+$/,'')}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.m3u8`,
-        contentType: 'live',
-        addedAt: s.added ? parseInt(s.added) * 1000 : null,
-        key: 'live_' + s.stream_id
-      });
-    });
-  }catch(e){ /* servidor pode não ter canais ao vivo via API; segue */ }
+    const r = await fetchByCategory(host, user, pass, userAgent, 'get_live_categories', 'get_live_streams',
+      (s, catName) => {
+        const group = catName || 'Ao vivo';
+        return {
+          name: s.name, logo: s.stream_icon || '', group, language: detectLanguage(group),
+          url: `${base}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.m3u8`,
+          contentType: 'live',
+          addedAt: s.added ? parseInt(s.added) * 1000 : null,
+          key: 'live_' + s.stream_id
+        };
+      }, 'Ao vivo', onProgress);
+    channels.push(...r.items); warnings.push(...r.warnings);
+  }catch(e){ warnings.push('Ao vivo: ' + e.message); }
 
   // Filmes (VOD)
   try{
-    const vodCats = await fetchXtreamJson(host, user, pass, 'get_vod_categories', userAgent);
-    const catMap = {};
-    (vodCats || []).forEach(c => catMap[c.category_id] = c.category_name);
-    const vodStreams = await fetchXtreamJson(host, user, pass, 'get_vod_streams', userAgent);
-    (vodStreams || []).forEach(s => {
-      const group = catMap[s.category_id] || 'Filmes';
-      channels.push({
-        name: s.name, logo: s.stream_icon || '',
-        group,
-        language: detectLanguage(group),
-        url: `${host.replace(/\/+$/,'')}/movie/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.${s.container_extension || 'mp4'}`,
-        contentType: 'movie',
-        addedAt: s.added ? parseInt(s.added) * 1000 : null,
-        key: 'movie_' + s.stream_id
-      });
-    });
-  }catch(e){ /* sem VOD; segue */ }
+    const r = await fetchByCategory(host, user, pass, userAgent, 'get_vod_categories', 'get_vod_streams',
+      (s, catName) => {
+        const group = catName || 'Filmes';
+        return {
+          name: s.name, logo: s.stream_icon || '', group, language: detectLanguage(group),
+          url: `${base}/movie/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.${s.container_extension || 'mp4'}`,
+          contentType: 'movie',
+          addedAt: s.added ? parseInt(s.added) * 1000 : null,
+          key: 'movie_' + s.stream_id
+        };
+      }, 'Filmes', onProgress);
+    channels.push(...r.items); warnings.push(...r.warnings);
+  }catch(e){ warnings.push('Filmes: ' + e.message); }
 
   // Séries
   try{
-    const serCats = await fetchXtreamJson(host, user, pass, 'get_series_categories', userAgent);
-    const catMap = {};
-    (serCats || []).forEach(c => catMap[c.category_id] = c.category_name);
-    const series = await fetchXtreamJson(host, user, pass, 'get_series', userAgent);
-    (series || []).forEach(s => {
-      const group = catMap[s.category_id] || 'Séries';
-      channels.push({
-        name: s.name, logo: s.cover || '',
-        group,
-        language: detectLanguage(group),
-        url: '', // séries exigem escolher episódio - ver playChannel
-        seriesId: s.series_id,
-        contentType: 'series',
-        addedAt: s.last_modified ? parseInt(s.last_modified) * 1000 : null,
-        key: 'series_' + s.series_id
-      });
-    });
-  }catch(e){ /* sem séries; segue */ }
+    const r = await fetchByCategory(host, user, pass, userAgent, 'get_series_categories', 'get_series',
+      (s, catName) => {
+        const group = catName || 'Séries';
+        return {
+          name: s.name, logo: s.cover || '', group, language: detectLanguage(group),
+          url: '', seriesId: s.series_id,
+          contentType: 'series',
+          addedAt: s.last_modified ? parseInt(s.last_modified) * 1000 : null,
+          key: 'series_' + s.series_id
+        };
+      }, 'Séries', onProgress);
+    channels.push(...r.items); warnings.push(...r.warnings);
+  }catch(e){ warnings.push('Séries: ' + e.message); }
 
+  channels._warnings = warnings;
   return channels;
 }
 
@@ -434,6 +444,7 @@ async function handleAddList(){
   const btn = document.getElementById('addBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Processando...';
+  const onProgress = (msg) => { btn.innerHTML = `<span class="spinner"></span> ${msg}`; };
 
   try{
     let channels = [];
@@ -453,7 +464,7 @@ async function handleAddList(){
         // A URL é de um servidor Xtream (tem username/password) - tenta a API completa,
         // que já separa Ao vivo/Filmes/Séries e traz datas de adição.
         try{
-          channels = await fetchXtreamFull(xtreamParsed.host, xtreamParsed.user, xtreamParsed.pass, userAgent);
+          channels = await fetchXtreamFull(xtreamParsed.host, xtreamParsed.user, xtreamParsed.pass, userAgent, onProgress);
           if(channels.length === 0) throw new Error('API não retornou conteúdo');
           source = {type:'xtream', host:xtreamParsed.host, user:xtreamParsed.user, pass:xtreamParsed.pass, userAgent};
         }catch(apiErr){
@@ -472,7 +483,7 @@ async function handleAddList(){
       const pass = document.getElementById('xtPass').value.trim();
       if(!host || !user || !pass) throw new Error('Preencha servidor, usuário e senha.');
       try{
-        channels = await fetchXtreamFull(host, user, pass, userAgent);
+        channels = await fetchXtreamFull(host, user, pass, userAgent, onProgress);
         if(channels.length === 0) throw new Error('API não retornou conteúdo');
       }catch(apiErr){
         // Fallback: API completa falhou (servidor não suporta ou bloqueou) - tenta M3U tradicional
@@ -498,7 +509,9 @@ async function handleAddList(){
     await storeSet('lists:index', state.lists);
     await storeSet(`lists:${id}:channels`, channels);
 
-    msgEl.textContent = `Lista salva com ${channels.length} canais!`;
+    const warnings = channels._warnings || [];
+    msgEl.textContent = `Lista salva com ${channels.length} itens!` +
+      (warnings.length ? ` ⚠️ ${warnings.length} categoria(s) falharam ao carregar: ${warnings.slice(0,3).join(' | ')}${warnings.length>3?'...':''}` : '');
     msgEl.classList.remove('hidden');
     document.getElementById('listName').value='';
     document.getElementById('m3uUrl').value='';
@@ -911,6 +924,7 @@ async function refreshCurrentList(){
   const btn = document.getElementById('refreshBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Verificando...';
+  const onProgress = (msg) => { btn.innerHTML = `<span class="spinner"></span> ${msg}`; };
 
   try{
     let newChannels;
@@ -919,7 +933,7 @@ async function refreshCurrentList(){
       newChannels = parseM3U(text);
     } else if(list.source.type === 'xtream'){
       try{
-        newChannels = await fetchXtreamFull(list.source.host, list.source.user, list.source.pass, list.source.userAgent);
+        newChannels = await fetchXtreamFull(list.source.host, list.source.user, list.source.pass, list.source.userAgent, onProgress);
         if(newChannels.length === 0) throw new Error('sem conteúdo');
       }catch(apiErr){
         const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
@@ -932,6 +946,7 @@ async function refreshCurrentList(){
       return;
     }
 
+    const warnings = newChannels._warnings || [];
     const oldKeys = new Set(state.currentChannels.map(c=>c.key));
     const added = newChannels.filter(c=>!oldKeys.has(c.key));
 
@@ -953,7 +968,7 @@ async function refreshCurrentList(){
       document.getElementById('newBanner').classList.remove('hidden');
     } else {
       document.getElementById('newBanner').classList.add('hidden');
-      alert('Nenhum canal novo encontrado.');
+      alert('Nenhum canal novo encontrado.' + (warnings.length ? `\n\n⚠️ ${warnings.length} categoria(s) falharam ao buscar: ${warnings.slice(0,3).join(' | ')}` : ''));
     }
     renderChannels();
   }catch(e){
