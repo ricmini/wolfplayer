@@ -156,7 +156,17 @@ http://..."></textarea>
 
     <div class="toolbar">
       <input type="text" id="searchInput" placeholder="Buscar canal..." oninput="renderChannels()">
+      <select id="typeFilter" onchange="renderChannels()">
+        <option value="">Todos os tipos</option>
+        <option value="live">📡 Ao vivo</option>
+        <option value="movie">🎬 Filmes</option>
+        <option value="series">📺 Séries</option>
+      </select>
       <select id="groupFilter" onchange="renderChannels()"></select>
+      <select id="sortOrder" onchange="renderChannels()">
+        <option value="name">Ordenar: Nome</option>
+        <option value="recent">Ordenar: Mais recentes</option>
+      </select>
       <button class="ghost" id="refreshBtn" onclick="refreshCurrentList()">🔄 Verificar novidades</button>
       <button class="ghost" style="color:var(--danger)" onclick="deleteCurrentList()">Excluir lista</button>
     </div>
@@ -247,6 +257,85 @@ function buildXtreamM3U(host, user, pass){
   return `${clean}/get.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&type=m3u_plus&output=ts`;
 }
 
+function buildXtreamApiUrl(host, user, pass, action, extra){
+  const clean = host.replace(/\/+$/,'');
+  let url = `${clean}/player_api.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&action=${action}`;
+  if(extra) url += extra;
+  return url;
+}
+
+async function fetchXtreamJson(host, user, pass, action, userAgent, extra){
+  const url = buildXtreamApiUrl(host, user, pass, action, extra);
+  const text = await fetchAsText(url, userAgent);
+  try{
+    return JSON.parse(text);
+  }catch(e){
+    throw new Error(`Resposta inválida da API (ação: ${action}). O servidor pode não suportar a API Xtream completa.`);
+  }
+}
+
+// Busca canais Ao Vivo, Filmes e Séries separadamente via API Xtream (traz datas de adição)
+async function fetchXtreamFull(host, user, pass, userAgent){
+  const channels = [];
+
+  // Ao vivo
+  try{
+    const liveCats = await fetchXtreamJson(host, user, pass, 'get_live_categories', userAgent);
+    const catMap = {};
+    (liveCats || []).forEach(c => catMap[c.category_id] = c.category_name);
+    const liveStreams = await fetchXtreamJson(host, user, pass, 'get_live_streams', userAgent);
+    (liveStreams || []).forEach(s => {
+      channels.push({
+        name: s.name, logo: s.stream_icon || '',
+        group: catMap[s.category_id] || 'Ao vivo',
+        url: `${host.replace(/\/+$/,'')}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.m3u8`,
+        contentType: 'live',
+        addedAt: s.added ? parseInt(s.added) * 1000 : null,
+        key: 'live_' + s.stream_id
+      });
+    });
+  }catch(e){ /* servidor pode não ter canais ao vivo via API; segue */ }
+
+  // Filmes (VOD)
+  try{
+    const vodCats = await fetchXtreamJson(host, user, pass, 'get_vod_categories', userAgent);
+    const catMap = {};
+    (vodCats || []).forEach(c => catMap[c.category_id] = c.category_name);
+    const vodStreams = await fetchXtreamJson(host, user, pass, 'get_vod_streams', userAgent);
+    (vodStreams || []).forEach(s => {
+      channels.push({
+        name: s.name, logo: s.stream_icon || '',
+        group: catMap[s.category_id] || 'Filmes',
+        url: `${host.replace(/\/+$/,'')}/movie/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.${s.container_extension || 'mp4'}`,
+        contentType: 'movie',
+        addedAt: s.added ? parseInt(s.added) * 1000 : null,
+        key: 'movie_' + s.stream_id
+      });
+    });
+  }catch(e){ /* sem VOD; segue */ }
+
+  // Séries
+  try{
+    const serCats = await fetchXtreamJson(host, user, pass, 'get_series_categories', userAgent);
+    const catMap = {};
+    (serCats || []).forEach(c => catMap[c.category_id] = c.category_name);
+    const series = await fetchXtreamJson(host, user, pass, 'get_series', userAgent);
+    (series || []).forEach(s => {
+      channels.push({
+        name: s.name, logo: s.cover || '',
+        group: catMap[s.category_id] || 'Séries',
+        url: '', // séries exigem escolher episódio - ver playChannel
+        seriesId: s.series_id,
+        contentType: 'series',
+        addedAt: s.last_modified ? parseInt(s.last_modified) * 1000 : null,
+        key: 'series_' + s.series_id
+      });
+    });
+  }catch(e){ /* sem séries; segue */ }
+
+  return channels;
+}
+
 // ---------- Add list flow ----------
 async function handleAddList(){
   const errEl = document.getElementById('addError');
@@ -287,9 +376,16 @@ async function handleAddList(){
       const user = document.getElementById('xtUser').value.trim();
       const pass = document.getElementById('xtPass').value.trim();
       if(!host || !user || !pass) throw new Error('Preencha servidor, usuário e senha.');
-      const url = buildXtreamM3U(host, user, pass);
-      const text = await fetchAsText(url, userAgent);
-      channels = parseM3U(text);
+      try{
+        channels = await fetchXtreamFull(host, user, pass, userAgent);
+        if(channels.length === 0) throw new Error('API não retornou conteúdo');
+      }catch(apiErr){
+        // Fallback: API completa falhou (servidor não suporta ou bloqueou) - tenta M3U tradicional
+        const url = buildXtreamM3U(host, user, pass);
+        const text = await fetchAsText(url, userAgent);
+        channels = parseM3U(text);
+        channels.forEach(c => { c.contentType = 'live'; });
+      }
       source = {type:'xtream', host, user, pass, userAgent};
     }
 
@@ -442,7 +538,7 @@ async function openList(id){
 
   if(state.newKeys.size > 0){
     document.getElementById('newBannerText').textContent =
-      `✨ ${state.newKeys.size} novo(s) canal(is) desde a última verificação!`;
+      `✨ ${state.newKeys.size} novo(s) item(ns) (canais, filmes ou séries) desde a última verificação!`;
     document.getElementById('newBanner').classList.remove('hidden');
   } else {
     document.getElementById('newBanner').classList.add('hidden');
@@ -456,36 +552,61 @@ async function openList(id){
 function renderChannels(){
   const search = document.getElementById('searchInput').value.toLowerCase();
   const group = document.getElementById('groupFilter').value;
+  const type = document.getElementById('typeFilter').value;
+  const sortBy = document.getElementById('sortOrder').value;
   const grid = document.getElementById('channelsGrid');
   grid.innerHTML = '';
 
-  const filtered = state.currentChannels.filter(c=>{
+  let filtered = state.currentChannels.filter(c=>{
     const matchSearch = !search || c.name.toLowerCase().includes(search);
     const matchGroup = !group || group === 'Todos' || c.group === group;
-    return matchSearch && matchGroup;
+    const matchType = !type || c.contentType === type || (!c.contentType && type === 'live');
+    return matchSearch && matchGroup && matchType;
   });
+
+  if(sortBy === 'recent'){
+    filtered = filtered.slice().sort((a,b)=>(b.addedAt||0) - (a.addedAt||0));
+  }
 
   if(filtered.length === 0){
     grid.innerHTML = '<p class="empty" style="grid-column:1/-1">Nenhum canal encontrado.</p>';
     return;
   }
 
+  const typeIcon = {live:'📡', movie:'🎬', series:'📺'};
+
   filtered.forEach(c=>{
     const div = document.createElement('div');
     div.className = 'chan';
     div.onclick = ()=>playChannel(c);
     const isNew = state.newKeys.has(c.key);
+    const dateStr = c.addedAt ? new Date(c.addedAt).toLocaleDateString('pt-BR') : '';
     div.innerHTML = `
       ${isNew ? '<span class="new-dot">NOVO</span>' : ''}
       ${c.logo ? `<img src="${escapeHtml(c.logo)}" onerror="this.style.display='none'">` : '<div style="height:60px"></div>'}
-      <div class="name">${escapeHtml(c.name)}</div>
+      <div class="name">${typeIcon[c.contentType] || ''} ${escapeHtml(c.name)}</div>
+      ${dateStr ? `<div style="font-size:10px;color:var(--muted);margin-top:2px">Adicionado: ${dateStr}</div>` : ''}
     `;
     grid.appendChild(div);
   });
 }
 
 // ---------- Playback ----------
-function playChannel(c){
+function buildMxPlayerLink(url){
+  const scheme = url.startsWith('https') ? 'https' : 'http';
+  const noScheme = url.replace(/^https?:\/\//, '');
+  const fallback = encodeURIComponent('https://play.google.com/store/apps/details?id=com.mxtech.videoplayer.ad');
+  return `intent://${noScheme}#Intent;scheme=${scheme};package=com.mxtech.videoplayer.ad;S.browser_fallback_url=${fallback};end`;
+}
+
+async function playChannel(c){
+  if(c.contentType === 'series'){
+    return openSeriesEpisodes(c);
+  }
+  const oldEpList = document.getElementById('episodeList');
+  if(oldEpList) oldEpList.remove();
+  document.getElementById('video').classList.remove('hidden');
+
   const wrap = document.getElementById('player-wrap');
   const video = document.getElementById('video');
   const title = document.getElementById('player-title');
@@ -497,6 +618,7 @@ function playChannel(c){
     <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
       <span style="flex:1">${escapeHtml(c.name)}</span>
       <a href="vlc://${c.url}" style="color:var(--accent2);text-decoration:none;font-size:12px;border:1px solid var(--border);padding:4px 10px;border-radius:6px;">▶ Abrir no VLC</a>
+      <a href="${buildMxPlayerLink(c.url)}" style="color:var(--accent2);text-decoration:none;font-size:12px;border:1px solid var(--border);padding:4px 10px;border-radius:6px;">▶ Abrir no MX Player</a>
       <button class="ghost" style="font-size:12px;padding:4px 10px" onclick="copyChannelUrl('${c.url.replace(/'/g,"\\'")}')">📋 Copiar link</button>
     </div>
     <div id="playerErrorMsg" style="color:var(--danger);font-size:12px;margin-top:6px;"></div>
@@ -516,7 +638,7 @@ function playChannel(c){
     hls.on(Hls.Events.ERROR, (evt, data)=>{
       if(data.fatal){
         document.getElementById('playerErrorMsg').textContent =
-          'Não foi possível reproduzir aqui no navegador (servidor pode ser instável ou os segmentos serem grandes demais para o proxy). Use "Abrir no VLC" ou "Copiar link" acima.';
+          'Não foi possível reproduzir aqui no navegador (servidor pode ser instável ou os segmentos serem grandes demais para o proxy, especialmente em filmes/episódios grandes). Use "Abrir no VLC" ou "Copiar link" acima.';
       }
     });
     state.hls = hls;
@@ -528,6 +650,50 @@ function playChannel(c){
       'Não foi possível reproduzir automaticamente. Use "Abrir no VLC" ou "Copiar link" acima.';
   });
   wrap.scrollIntoView({behavior:'smooth'});
+}
+
+async function openSeriesEpisodes(c){
+  const list = state.lists.find(l=>l.id === state.currentListId);
+  if(!list || list.source.type !== 'xtream'){
+    alert('Episódios só estão disponíveis para listas Xtream Codes.');
+    return;
+  }
+  const { host, user, pass, userAgent } = list.source;
+  const wrap = document.getElementById('player-wrap');
+  const title = document.getElementById('player-title');
+  wrap.classList.remove('hidden');
+  document.getElementById('video').classList.add('hidden');
+  title.innerHTML = `<span class="spinner"></span> Carregando episódios de "${escapeHtml(c.name)}"...`;
+
+  try{
+    const info = await fetchXtreamJson(host, user, pass, 'get_series_info', userAgent, `&series_id=${c.seriesId}`);
+    const seasons = info.episodes || {};
+    let html = `<div style="padding:12px"><b>${escapeHtml(c.name)}</b><br><span style="font-size:12px;color:var(--muted)">Toque num episódio para reproduzir</span>`;
+    Object.keys(seasons).forEach(seasonNum=>{
+      html += `<div style="margin-top:10px;font-size:13px;color:var(--accent2)">Temporada ${seasonNum}</div>`;
+      seasons[seasonNum].forEach(ep=>{
+        const epUrl = `${host.replace(/\/+$/,'')}/series/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${ep.id}.${ep.container_extension || 'mp4'}`;
+        html += `<div class="list-item" style="margin:6px 0" onclick='playEpisode(${JSON.stringify(ep.title || ("Episódio "+ep.episode_num)).replace(/'/g,"&apos;")}, ${JSON.stringify(epUrl)})'>
+          <div class="meta"><b>Ep. ${ep.episode_num}</b><span>${escapeHtml(ep.title || '')}</span></div>
+        </div>`;
+      });
+    });
+    html += `</div>`;
+    document.getElementById('player-wrap').insertAdjacentHTML('afterend', `<div id="episodeList">${html}</div>`);
+    title.textContent = '';
+    wrap.classList.add('hidden');
+  }catch(e){
+    title.textContent = '';
+    wrap.classList.add('hidden');
+    alert('Não foi possível carregar os episódios: ' + e.message);
+  }
+}
+
+function playEpisode(name, url){
+  const old = document.getElementById('episodeList');
+  if(old) old.remove();
+  document.getElementById('video').classList.remove('hidden');
+  playChannel({name, url, contentType:'movie'});
 }
 
 function copyChannelUrl(url){
@@ -547,19 +713,26 @@ async function refreshCurrentList(){
   btn.innerHTML = '<span class="spinner"></span> Verificando...';
 
   try{
-    let text;
+    let newChannels;
     if(list.source.type === 'm3uUrl'){
-      text = await fetchAsText(list.source.url, list.source.userAgent);
+      const text = await fetchAsText(list.source.url, list.source.userAgent);
+      newChannels = parseM3U(text);
     } else if(list.source.type === 'xtream'){
-      const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
-      text = await fetchAsText(url, list.source.userAgent);
+      try{
+        newChannels = await fetchXtreamFull(list.source.host, list.source.user, list.source.pass, list.source.userAgent);
+        if(newChannels.length === 0) throw new Error('sem conteúdo');
+      }catch(apiErr){
+        const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
+        const text = await fetchAsText(url, list.source.userAgent);
+        newChannels = parseM3U(text);
+        newChannels.forEach(c => { c.contentType = 'live'; });
+      }
     } else {
       alert('Listas coladas manualmente não podem ser verificadas automaticamente. Adicione novamente colando o conteúdo atualizado.');
       btn.disabled = false; btn.textContent = '🔄 Verificar novidades';
       return;
     }
 
-    const newChannels = parseM3U(text);
     const oldKeys = new Set(state.currentChannels.map(c=>c.key));
     const added = newChannels.filter(c=>!oldKeys.has(c.key));
 
@@ -577,7 +750,7 @@ async function refreshCurrentList(){
     document.getElementById('groupFilter').innerHTML = groups.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
 
     if(added.length > 0){
-      document.getElementById('newBannerText').textContent = `✨ ${added.length} novo(s) canal(is) encontrado(s): ${added.slice(0,5).map(c=>c.name).join(', ')}${added.length>5?'...':''}`;
+      document.getElementById('newBannerText').textContent = `✨ ${added.length} novo(s) item(ns) encontrado(s): ${added.slice(0,5).map(c=>c.name).join(', ')}${added.length>5?'...':''}`;
       document.getElementById('newBanner').classList.remove('hidden');
     } else {
       document.getElementById('newBanner').classList.add('hidden');
