@@ -1,0 +1,578 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8">
+<title>IPTV Player</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.13/hls.min.js"></script>
+<style>
+  :root{
+    --bg:#0f1115; --bg2:#171a21; --card:#1e222b; --border:#2a2f3a;
+    --text:#e8eaed; --muted:#9aa3af; --accent:#5b8cff; --accent2:#7ee0a7;
+    --danger:#ff6b6b;
+  }
+  *{box-sizing:border-box;}
+  body{margin:0;font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,sans-serif;background:var(--bg);color:var(--text);}
+  header{display:flex;align-items:center;gap:12px;padding:14px 18px;background:var(--bg2);border-bottom:1px solid var(--border);position:sticky;top:0;z-index:10;}
+  header h1{font-size:17px;margin:0;font-weight:600;}
+  header .tabs{display:flex;gap:6px;margin-left:auto;}
+  .tab-btn{background:transparent;border:1px solid var(--border);color:var(--muted);padding:7px 14px;border-radius:8px;cursor:pointer;font-size:13px;}
+  .tab-btn.active{background:var(--accent);color:#fff;border-color:var(--accent);}
+  main{padding:16px;max-width:1100px;margin:0 auto;}
+  .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:16px;margin-bottom:14px;}
+  .hidden{display:none !important;}
+  label{font-size:12px;color:var(--muted);display:block;margin:10px 0 4px;}
+  input[type=text],input[type=password],input[type=url],textarea,select{
+    width:100%;background:var(--bg);border:1px solid var(--border);color:var(--text);
+    padding:9px 10px;border-radius:8px;font-size:14px;
+  }
+  textarea{min-height:120px;font-family:monospace;font-size:12px;}
+  .row{display:flex;gap:10px;flex-wrap:wrap;}
+  .row > *{flex:1;min-width:160px;}
+  .radio-group{display:flex;gap:14px;margin:8px 0;}
+  .radio-group label{display:flex;align-items:center;gap:6px;color:var(--text);font-size:13px;margin:0;cursor:pointer;}
+  button.primary{background:var(--accent);color:#fff;border:none;padding:10px 16px;border-radius:8px;cursor:pointer;font-size:14px;font-weight:600;margin-top:12px;}
+  button.primary:disabled{opacity:.5;cursor:default;}
+  button.ghost{background:transparent;border:1px solid var(--border);color:var(--muted);padding:6px 12px;border-radius:8px;cursor:pointer;font-size:12px;}
+  button.ghost:hover{color:var(--text);border-color:var(--accent);}
+  .err{color:var(--danger);font-size:13px;margin-top:8px;}
+  .msg{color:var(--accent2);font-size:13px;margin-top:8px;}
+  .list-item{display:flex;align-items:center;gap:10px;padding:10px;border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer;background:var(--bg2);}
+  .list-item:hover{border-color:var(--accent);}
+  .list-item .meta{flex:1;}
+  .list-item .meta b{display:block;font-size:14px;}
+  .list-item .meta span{font-size:12px;color:var(--muted);}
+  .badge{background:var(--accent2);color:#0f1115;font-size:11px;font-weight:700;padding:2px 8px;border-radius:20px;}
+  .banner{background:#1c2b1f;border:1px solid #2e5a3a;color:var(--accent2);padding:10px 14px;border-radius:10px;margin-bottom:14px;font-size:13px;display:flex;align-items:center;gap:10px;}
+  .banner button{margin-left:auto;}
+  .toolbar{display:flex;gap:10px;align-items:center;margin-bottom:12px;flex-wrap:wrap;}
+  .toolbar input,.toolbar select{width:auto;flex:1;min-width:140px;}
+  .grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(140px,1fr));gap:10px;}
+  .chan{background:var(--bg2);border:1px solid var(--border);border-radius:10px;padding:10px;cursor:pointer;text-align:center;position:relative;}
+  .chan:hover{border-color:var(--accent);}
+  .chan img{width:100%;height:60px;object-fit:contain;margin-bottom:6px;background:#000;border-radius:6px;}
+  .chan .name{font-size:12px;line-height:1.3;max-height:32px;overflow:hidden;}
+  .chan .new-dot{position:absolute;top:6px;right:6px;background:var(--accent2);color:#0f1115;font-size:9px;font-weight:700;padding:1px 6px;border-radius:20px;}
+  #player-wrap{background:#000;border-radius:12px;overflow:hidden;margin-bottom:14px;position:sticky;top:64px;z-index:5;}
+  video{width:100%;max-height:50vh;display:block;background:#000;}
+  #player-title{padding:8px 12px;font-size:13px;color:var(--muted);background:var(--bg2);}
+  .empty{color:var(--muted);font-size:13px;text-align:center;padding:30px 0;}
+  .spinner{display:inline-block;width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:spin .7s linear infinite;vertical-align:middle;margin-right:6px;}
+  @keyframes spin{to{transform:rotate(360deg);}}
+  .back-link{color:var(--accent);cursor:pointer;font-size:13px;margin-bottom:10px;display:inline-block;}
+</style>
+</head>
+<body>
+
+<header>
+  <h1>📺 IPTV Player</h1>
+  <div class="tabs">
+    <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
+    <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
+  </div>
+</header>
+
+<main>
+
+  <!-- VIEW: ADD LIST -->
+  <div id="view-add" class="hidden">
+    <div class="card">
+      <h3 style="margin-top:0">Nova lista</h3>
+      <div class="radio-group">
+        <label><input type="radio" name="srcType" value="m3uUrl" checked onchange="updateAddForm()"> URL M3U</label>
+        <label><input type="radio" name="srcType" value="m3uText" onchange="updateAddForm()"> Colar M3U</label>
+        <label><input type="radio" name="srcType" value="xtream" onchange="updateAddForm()"> Xtream Codes</label>
+      </div>
+
+      <label>Nome da lista</label>
+      <input type="text" id="listName" placeholder="Ex: Minha lista principal">
+
+      <div id="fld-m3uUrl">
+        <label>URL do arquivo M3U/M3U8</label>
+        <input type="url" id="m3uUrl" placeholder="http://exemplo.com/lista.m3u">
+      </div>
+
+      <div id="fld-m3uText" class="hidden">
+        <label>Cole o conteúdo M3U aqui</label>
+        <textarea id="m3uText" placeholder="#EXTM3U
+#EXTINF:-1 tvg-name=&quot;Canal 1&quot;,Canal 1
+http://..."></textarea>
+      </div>
+
+      <div id="fld-xtream" class="hidden">
+        <div class="row">
+          <div>
+            <label>Servidor (com http:// e porta se houver)</label>
+            <input type="text" id="xtHost" placeholder="http://servidor.com:8080">
+          </div>
+        </div>
+        <div class="row">
+          <div>
+            <label>Usuário</label>
+            <input type="text" id="xtUser">
+          </div>
+          <div>
+            <label>Senha</label>
+            <input type="password" id="xtPass">
+          </div>
+        </div>
+      </div>
+
+      <button class="primary" id="addBtn" onclick="handleAddList()">Salvar lista</button>
+      <div id="addError" class="err hidden"></div>
+      <div id="addMsg" class="msg hidden"></div>
+      <p style="font-size:12px;color:var(--muted);margin-top:10px">
+        Nota: alguns servidores IPTV bloqueiam pedidos feitos direto do navegador (CORS). Se a busca automática falhar, use a opção "Colar M3U" copiando o conteúdo do link no navegador primeiro.
+      </p>
+    </div>
+  </div>
+
+  <!-- VIEW: LISTS -->
+  <div id="view-lists">
+    <div class="card">
+      <h3 style="margin-top:0">Listas salvas</h3>
+      <div id="listsContainer"><p class="empty">Nenhuma lista ainda. Clique em "Adicionar Lista".</p></div>
+    </div>
+  </div>
+
+  <!-- VIEW: CHANNELS -->
+  <div id="view-channels" class="hidden">
+    <span class="back-link" onclick="showView('lists')">← Voltar para listas</span>
+
+    <div id="newBanner" class="banner hidden">
+      <span id="newBannerText"></span>
+      <button class="ghost" onclick="dismissNewBanner()">Ok, entendi</button>
+    </div>
+
+    <div id="player-wrap" class="hidden">
+      <video id="video" controls autoplay></video>
+      <div id="player-title"></div>
+    </div>
+
+    <div class="toolbar">
+      <input type="text" id="searchInput" placeholder="Buscar canal..." oninput="renderChannels()">
+      <select id="groupFilter" onchange="renderChannels()"></select>
+      <button class="ghost" id="refreshBtn" onclick="refreshCurrentList()">🔄 Verificar novidades</button>
+      <button class="ghost" style="color:var(--danger)" onclick="deleteCurrentList()">Excluir lista</button>
+    </div>
+
+    <div class="grid" id="channelsGrid"></div>
+  </div>
+
+</main>
+
+<script>
+let state = {
+  lists: [],        // {id,name,type,source,createdAt,lastUpdated,channelCount}
+  currentListId: null,
+  currentChannels: [],
+  newKeys: new Set(),
+  hls: null
+};
+
+// ---------- Storage helpers ----------
+async function storeGet(key){
+  try{
+    const r = await window.storage.get(key, false);
+    return r ? JSON.parse(r.value) : null;
+  }catch(e){ return null; }
+}
+async function storeSet(key, value){
+  try{
+    await window.storage.set(key, JSON.stringify(value), false);
+    return true;
+  }catch(e){ console.error('storage set failed', e); return false; }
+}
+async function storeDelete(key){
+  try{ await window.storage.delete(key, false); }catch(e){}
+}
+
+// ---------- Init ----------
+async function init(){
+  const idx = await storeGet('lists:index');
+  state.lists = idx || [];
+  renderListsView();
+}
+init();
+
+// ---------- View switching ----------
+function showView(name){
+  document.getElementById('view-add').classList.toggle('hidden', name!=='add');
+  document.getElementById('view-lists').classList.toggle('hidden', name!=='lists');
+  document.getElementById('view-channels').classList.toggle('hidden', name!=='channels');
+  document.getElementById('tab-lists').classList.toggle('active', name==='lists');
+  document.getElementById('tab-add').classList.toggle('active', name==='add');
+  if(name==='lists') renderListsView();
+}
+
+function updateAddForm(){
+  const val = document.querySelector('input[name=srcType]:checked').value;
+  document.getElementById('fld-m3uUrl').classList.toggle('hidden', val!=='m3uUrl');
+  document.getElementById('fld-m3uText').classList.toggle('hidden', val!=='m3uText');
+  document.getElementById('fld-xtream').classList.toggle('hidden', val!=='xtream');
+}
+
+// ---------- M3U Parsing ----------
+function parseM3U(text){
+  const lines = text.split(/\r?\n/);
+  const channels = [];
+  let current = null;
+  for(let i=0;i<lines.length;i++){
+    const line = lines[i].trim();
+    if(!line) continue;
+    if(line.startsWith('#EXTINF')){
+      const nameMatch = line.match(/,(.*)$/);
+      const name = nameMatch ? nameMatch[1].trim() : 'Sem nome';
+      const tvgLogo = (line.match(/tvg-logo="([^"]*)"/) || [])[1] || '';
+      const groupTitle = (line.match(/group-title="([^"]*)"/) || [])[1] || 'Geral';
+      const tvgId = (line.match(/tvg-id="([^"]*)"/) || [])[1] || '';
+      current = {name, logo: tvgLogo, group: groupTitle, tvgId};
+    } else if(!line.startsWith('#') && current){
+      current.url = line;
+      current.key = (current.tvgId || current.name) + '|' + current.url;
+      channels.push(current);
+      current = null;
+    }
+  }
+  return channels;
+}
+
+function buildXtreamM3U(host, user, pass){
+  const clean = host.replace(/\/+$/,'');
+  return `${clean}/get.php?username=${encodeURIComponent(user)}&password=${encodeURIComponent(pass)}&type=m3u_plus&output=ts`;
+}
+
+// ---------- Add list flow ----------
+async function handleAddList(){
+  const errEl = document.getElementById('addError');
+  const msgEl = document.getElementById('addMsg');
+  errEl.classList.add('hidden');
+  msgEl.classList.add('hidden');
+  const name = document.getElementById('listName').value.trim();
+  const srcType = document.querySelector('input[name=srcType]:checked').value;
+
+  if(!name){
+    errEl.textContent = 'Dê um nome para a lista.';
+    errEl.classList.remove('hidden');
+    return;
+  }
+
+  const btn = document.getElementById('addBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Processando...';
+
+  try{
+    let channels = [];
+    let source = {};
+
+    if(srcType === 'm3uText'){
+      const text = document.getElementById('m3uText').value;
+      if(!text.trim()) throw new Error('Cole o conteúdo M3U.');
+      channels = parseM3U(text);
+      source = {type:'m3uText'};
+    } else if(srcType === 'm3uUrl'){
+      const url = document.getElementById('m3uUrl').value.trim();
+      if(!url) throw new Error('Informe a URL do M3U.');
+      const text = await fetchAsText(url);
+      channels = parseM3U(text);
+      source = {type:'m3uUrl', url};
+    } else if(srcType === 'xtream'){
+      const host = document.getElementById('xtHost').value.trim();
+      const user = document.getElementById('xtUser').value.trim();
+      const pass = document.getElementById('xtPass').value.trim();
+      if(!host || !user || !pass) throw new Error('Preencha servidor, usuário e senha.');
+      const url = buildXtreamM3U(host, user, pass);
+      const text = await fetchAsText(url);
+      channels = parseM3U(text);
+      source = {type:'xtream', host, user, pass};
+    }
+
+    if(channels.length === 0){
+      throw new Error('Nenhum canal encontrado. Verifique o conteúdo/URL.');
+    }
+
+    const id = 'list_' + Date.now();
+    const meta = {
+      id, name, source,
+      createdAt: Date.now(),
+      lastUpdated: Date.now(),
+      channelCount: channels.length
+    };
+    state.lists.push(meta);
+    await storeSet('lists:index', state.lists);
+    await storeSet(`lists:${id}:channels`, channels);
+
+    msgEl.textContent = `Lista salva com ${channels.length} canais!`;
+    msgEl.classList.remove('hidden');
+    document.getElementById('listName').value='';
+    document.getElementById('m3uUrl').value='';
+    document.getElementById('m3uText').value='';
+    document.getElementById('xtHost').value='';
+    document.getElementById('xtUser').value='';
+    document.getElementById('xtPass').value='';
+
+    setTimeout(()=>showView('lists'), 900);
+  }catch(e){
+    errEl.textContent = 'Erro: ' + e.message + (e.corsHint ? ' (possível bloqueio CORS do servidor — tente colar o M3U manualmente)' : '');
+    errEl.classList.remove('hidden');
+  }finally{
+    btn.disabled = false;
+    btn.textContent = 'Salvar lista';
+  }
+}
+
+const OWN_PROXY = '/.netlify/functions/proxy?url=';
+const PUBLIC_PROXY = 'https://api.allorigins.win/raw?url=';
+const PUBLIC_PROXY_2 = 'https://corsproxy.io/?url=';
+
+async function fetchAsText(url){
+  const attempts = [];
+
+  // 1) tenta direto
+  try{
+    const res = await fetch(url, {mode:'cors'});
+    if(res.ok) return await res.text();
+    attempts.push('Direto: servidor respondeu ' + res.status);
+  }catch(e){
+    attempts.push('Direto: ' + (e.message || 'bloqueado (CORS ou mixed content)'));
+  }
+
+  // 2) proxy próprio (Netlify Function) - o mais confiável, se estiver publicado via GitHub
+  try{
+    const res = await fetch(OWN_PROXY + encodeURIComponent(url));
+    if(res.ok){
+      const text = await res.text();
+      if(text && text.trim().length > 0) return text;
+      attempts.push('Proxy próprio: resposta vazia');
+    } else {
+      attempts.push('Proxy próprio: respondeu ' + res.status);
+    }
+  }catch(e){
+    attempts.push('Proxy próprio: ' + (e.message || 'indisponível (site publicado sem Functions?)'));
+  }
+
+  // 3) proxy público #1
+  try{
+    const res = await fetch(PUBLIC_PROXY + encodeURIComponent(url));
+    if(res.ok){
+      const text = await res.text();
+      if(text && text.trim().length > 0 && !text.includes('<html')) return text;
+      attempts.push('Proxy público 1: resposta vazia ou inválida');
+    } else {
+      attempts.push('Proxy público 1: respondeu ' + res.status);
+    }
+  }catch(e){
+    attempts.push('Proxy público 1: ' + (e.message || 'falhou'));
+  }
+
+  // 4) proxy público #2
+  try{
+    const res = await fetch(PUBLIC_PROXY_2 + encodeURIComponent(url));
+    if(res.ok){
+      const text = await res.text();
+      if(text && text.trim().length > 0 && !text.includes('<html')) return text;
+      attempts.push('Proxy público 2: resposta vazia ou inválida');
+    } else {
+      attempts.push('Proxy público 2: respondeu ' + res.status);
+    }
+  }catch(e){
+    attempts.push('Proxy público 2: ' + (e.message || 'falhou'));
+  }
+
+  const err = new Error('Todas as tentativas falharam:\n' + attempts.join('\n') +
+    '\n\nUse a opção "Colar M3U" copiando o conteúdo do link manualmente.');
+  err.corsHint = true;
+  throw err;
+}
+
+// ---------- Lists view ----------
+function renderListsView(){
+  const container = document.getElementById('listsContainer');
+  if(state.lists.length === 0){
+    container.innerHTML = '<p class="empty">Nenhuma lista ainda. Clique em "Adicionar Lista".</p>';
+    return;
+  }
+  container.innerHTML = '';
+  state.lists.forEach(list=>{
+    const div = document.createElement('div');
+    div.className = 'list-item';
+    div.onclick = ()=>openList(list.id);
+    const typeLabel = list.source.type === 'xtream' ? 'Xtream Codes' : (list.source.type === 'm3uUrl' ? 'M3U (URL)' : 'M3U (colado)');
+    div.innerHTML = `
+      <div class="meta">
+        <b>${escapeHtml(list.name)}</b>
+        <span>${typeLabel} · ${list.channelCount} canais · atualizado ${timeAgo(list.lastUpdated)}</span>
+      </div>
+    `;
+    container.appendChild(div);
+  });
+}
+
+function escapeHtml(s){
+  return (s||'').replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+function timeAgo(ts){
+  const diff = Date.now() - ts;
+  const mins = Math.floor(diff/60000);
+  if(mins < 1) return 'agora mesmo';
+  if(mins < 60) return `há ${mins} min`;
+  const hrs = Math.floor(mins/60);
+  if(hrs < 24) return `há ${hrs}h`;
+  return `há ${Math.floor(hrs/24)}d`;
+}
+
+// ---------- Open list / channels view ----------
+async function openList(id){
+  state.currentListId = id;
+  const channels = await storeGet(`lists:${id}:channels`) || [];
+  state.currentChannels = channels;
+  state.newKeys = new Set(channels.filter(c=>c._isNew).map(c=>c.key));
+
+  const groups = ['Todos', ...new Set(channels.map(c=>c.group))];
+  const sel = document.getElementById('groupFilter');
+  sel.innerHTML = groups.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+  document.getElementById('searchInput').value = '';
+
+  if(state.newKeys.size > 0){
+    document.getElementById('newBannerText').textContent =
+      `✨ ${state.newKeys.size} novo(s) canal(is) desde a última verificação!`;
+    document.getElementById('newBanner').classList.remove('hidden');
+  } else {
+    document.getElementById('newBanner').classList.add('hidden');
+  }
+
+  document.getElementById('player-wrap').classList.add('hidden');
+  showView('channels');
+  renderChannels();
+}
+
+function renderChannels(){
+  const search = document.getElementById('searchInput').value.toLowerCase();
+  const group = document.getElementById('groupFilter').value;
+  const grid = document.getElementById('channelsGrid');
+  grid.innerHTML = '';
+
+  const filtered = state.currentChannels.filter(c=>{
+    const matchSearch = !search || c.name.toLowerCase().includes(search);
+    const matchGroup = !group || group === 'Todos' || c.group === group;
+    return matchSearch && matchGroup;
+  });
+
+  if(filtered.length === 0){
+    grid.innerHTML = '<p class="empty" style="grid-column:1/-1">Nenhum canal encontrado.</p>';
+    return;
+  }
+
+  filtered.forEach(c=>{
+    const div = document.createElement('div');
+    div.className = 'chan';
+    div.onclick = ()=>playChannel(c);
+    const isNew = state.newKeys.has(c.key);
+    div.innerHTML = `
+      ${isNew ? '<span class="new-dot">NOVO</span>' : ''}
+      ${c.logo ? `<img src="${escapeHtml(c.logo)}" onerror="this.style.display='none'">` : '<div style="height:60px"></div>'}
+      <div class="name">${escapeHtml(c.name)}</div>
+    `;
+    grid.appendChild(div);
+  });
+}
+
+// ---------- Playback ----------
+function playChannel(c){
+  const wrap = document.getElementById('player-wrap');
+  const video = document.getElementById('video');
+  const title = document.getElementById('player-title');
+  wrap.classList.remove('hidden');
+  title.textContent = c.name;
+
+  if(state.hls){ state.hls.destroy(); state.hls = null; }
+
+  if(c.url.includes('.m3u8') && window.Hls && Hls.isSupported()){
+    const hls = new Hls();
+    hls.loadSource(c.url);
+    hls.attachMedia(video);
+    hls.on(Hls.Events.ERROR, (evt, data)=>{
+      if(data.fatal){
+        title.textContent = c.name + ' — erro ao reproduzir (o servidor pode bloquear reprodução no navegador)';
+      }
+    });
+    state.hls = hls;
+  } else {
+    video.src = c.url;
+  }
+  video.play().catch(()=>{});
+  wrap.scrollIntoView({behavior:'smooth'});
+}
+
+// ---------- Refresh / detect new content ----------
+async function refreshCurrentList(){
+  const list = state.lists.find(l=>l.id === state.currentListId);
+  if(!list) return;
+  const btn = document.getElementById('refreshBtn');
+  btn.disabled = true;
+  btn.innerHTML = '<span class="spinner"></span> Verificando...';
+
+  try{
+    let text;
+    if(list.source.type === 'm3uUrl'){
+      text = await fetchAsText(list.source.url);
+    } else if(list.source.type === 'xtream'){
+      const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
+      text = await fetchAsText(url);
+    } else {
+      alert('Listas coladas manualmente não podem ser verificadas automaticamente. Adicione novamente colando o conteúdo atualizado.');
+      btn.disabled = false; btn.textContent = '🔄 Verificar novidades';
+      return;
+    }
+
+    const newChannels = parseM3U(text);
+    const oldKeys = new Set(state.currentChannels.map(c=>c.key));
+    const added = newChannels.filter(c=>!oldKeys.has(c.key));
+
+    newChannels.forEach(c=>{ c._isNew = added.some(a=>a.key===c.key); });
+
+    state.currentChannels = newChannels;
+    state.newKeys = new Set(added.map(c=>c.key));
+
+    await storeSet(`lists:${list.id}:channels`, newChannels);
+    list.lastUpdated = Date.now();
+    list.channelCount = newChannels.length;
+    await storeSet('lists:index', state.lists);
+
+    const groups = ['Todos', ...new Set(newChannels.map(c=>c.group))];
+    document.getElementById('groupFilter').innerHTML = groups.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+
+    if(added.length > 0){
+      document.getElementById('newBannerText').textContent = `✨ ${added.length} novo(s) canal(is) encontrado(s): ${added.slice(0,5).map(c=>c.name).join(', ')}${added.length>5?'...':''}`;
+      document.getElementById('newBanner').classList.remove('hidden');
+    } else {
+      document.getElementById('newBanner').classList.add('hidden');
+      alert('Nenhum canal novo encontrado.');
+    }
+    renderChannels();
+  }catch(e){
+    alert('Erro ao verificar: ' + e.message);
+  }finally{
+    btn.disabled = false;
+    btn.textContent = '🔄 Verificar novidades';
+  }
+}
+
+function dismissNewBanner(){
+  document.getElementById('newBanner').classList.add('hidden');
+  state.currentChannels.forEach(c=>delete c._isNew);
+  state.newKeys = new Set();
+  storeSet(`lists:${state.currentListId}:channels`, state.currentChannels);
+  renderChannels();
+}
+
+async function deleteCurrentList(){
+  if(!confirm('Tem certeza que deseja excluir esta lista?')) return;
+  const id = state.currentListId;
+  state.lists = state.lists.filter(l=>l.id !== id);
+  await storeSet('lists:index', state.lists);
+  await storeDelete(`lists:${id}:channels`);
+  showView('lists');
+}
+</script>
+</body>
+</html>
