@@ -30,9 +30,9 @@ exports.handler = async (event) => {
     const buffer = Buffer.from(arrayBuffer);
 
     // Playlists m3u8 são texto; segmentos .ts/.aac/etc são binário — decide como devolver
-    const isText = contentType.includes('mpegurl') || contentType.includes('text') || targetUrl.includes('.m3u8');
+    const isText = contentType.includes('mpegurl') || contentType.includes('text') || contentType.includes('json') || targetUrl.includes('.m3u8');
 
-    if (isText) {
+    if (isText && !contentType.includes('json')) {
       let text = buffer.toString('utf-8');
       // Reescreve URLs relativas/absolutas dentro do m3u8 para passarem pelo mesmo proxy
       const baseUrl = targetUrl.substring(0, targetUrl.lastIndexOf('/') + 1);
