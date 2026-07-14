@@ -502,19 +502,26 @@ function playChannel(c){
     <div id="playerErrorMsg" style="color:var(--danger);font-size:12px;margin-top:6px;"></div>
   `;
 
+  const list = state.lists.find(l=>l.id === state.currentListId);
+  const ua = (list && list.source && list.source.userAgent) || 'VLC/3.0.18 LibVLC/3.0.18';
+  const proxiedUrl = OWN_PROXY + encodeURIComponent(c.url) + '&ua=' + encodeURIComponent(ua);
+
   if(c.url.includes('.m3u8') && window.Hls && Hls.isSupported()){
     const hls = new Hls();
-    hls.loadSource(c.url);
+    // Carrega via proxy próprio - resolve mixed content (http dentro de https) e permite
+    // usar o User-Agent do VLC no servidor de origem, já que o navegador não deixa alterar
+    // isso diretamente para pedidos de vídeo.
+    hls.loadSource(proxiedUrl);
     hls.attachMedia(video);
     hls.on(Hls.Events.ERROR, (evt, data)=>{
       if(data.fatal){
         document.getElementById('playerErrorMsg').textContent =
-          'Não foi possível reproduzir aqui no navegador (o servidor pode bloquear ou exigir https). Use "Abrir no VLC" ou "Copiar link" acima.';
+          'Não foi possível reproduzir aqui no navegador (servidor pode ser instável ou os segmentos serem grandes demais para o proxy). Use "Abrir no VLC" ou "Copiar link" acima.';
       }
     });
     state.hls = hls;
   } else {
-    video.src = c.url;
+    video.src = proxiedUrl;
   }
   video.play().catch(()=>{
     document.getElementById('playerErrorMsg').textContent =
