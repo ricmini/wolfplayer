@@ -86,6 +86,12 @@
       <label>Nome da lista</label>
       <input type="text" id="listName" placeholder="Ex: Minha lista principal">
 
+      <label>User-Agent (usado ao buscar a lista via proxy próprio)</label>
+      <input type="text" id="userAgent" value="VLC/3.0.18 LibVLC/3.0.18">
+      <p style="font-size:11px;color:var(--muted);margin:4px 0 0">
+        Só afeta a busca da lista de canais. Não é possível controlar o User-Agent da reprodução de vídeo dentro do navegador — isso é uma restrição do próprio navegador.
+      </p>
+
       <div id="fld-m3uUrl">
         <label>URL do arquivo M3U/M3U8</label>
         <input type="url" id="m3uUrl" placeholder="http://exemplo.com/lista.m3u">
@@ -263,6 +269,7 @@ async function handleAddList(){
   try{
     let channels = [];
     let source = {};
+    const userAgent = document.getElementById('userAgent').value.trim() || 'VLC/3.0.18 LibVLC/3.0.18';
 
     if(srcType === 'm3uText'){
       const text = document.getElementById('m3uText').value;
@@ -272,18 +279,18 @@ async function handleAddList(){
     } else if(srcType === 'm3uUrl'){
       const url = document.getElementById('m3uUrl').value.trim();
       if(!url) throw new Error('Informe a URL do M3U.');
-      const text = await fetchAsText(url);
+      const text = await fetchAsText(url, userAgent);
       channels = parseM3U(text);
-      source = {type:'m3uUrl', url};
+      source = {type:'m3uUrl', url, userAgent};
     } else if(srcType === 'xtream'){
       const host = document.getElementById('xtHost').value.trim();
       const user = document.getElementById('xtUser').value.trim();
       const pass = document.getElementById('xtPass').value.trim();
       if(!host || !user || !pass) throw new Error('Preencha servidor, usuário e senha.');
       const url = buildXtreamM3U(host, user, pass);
-      const text = await fetchAsText(url);
+      const text = await fetchAsText(url, userAgent);
       channels = parseM3U(text);
-      source = {type:'xtream', host, user, pass};
+      source = {type:'xtream', host, user, pass, userAgent};
     }
 
     if(channels.length === 0){
@@ -324,8 +331,9 @@ const OWN_PROXY = '/.netlify/functions/proxy?url=';
 const PUBLIC_PROXY = 'https://api.allorigins.win/raw?url=';
 const PUBLIC_PROXY_2 = 'https://corsproxy.io/?url=';
 
-async function fetchAsText(url){
+async function fetchAsText(url, userAgent){
   const attempts = [];
+  const uaParam = userAgent ? '&ua=' + encodeURIComponent(userAgent) : '';
 
   // 1) tenta direto
   try{
@@ -338,7 +346,7 @@ async function fetchAsText(url){
 
   // 2) proxy próprio (Netlify Function) - o mais confiável, se estiver publicado via GitHub
   try{
-    const res = await fetch(OWN_PROXY + encodeURIComponent(url));
+    const res = await fetch(OWN_PROXY + encodeURIComponent(url) + uaParam);
     if(res.ok){
       const text = await res.text();
       if(text && text.trim().length > 0) return text;
@@ -534,10 +542,10 @@ async function refreshCurrentList(){
   try{
     let text;
     if(list.source.type === 'm3uUrl'){
-      text = await fetchAsText(list.source.url);
+      text = await fetchAsText(list.source.url, list.source.userAgent);
     } else if(list.source.type === 'xtream'){
       const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
-      text = await fetchAsText(url);
+      text = await fetchAsText(url, list.source.userAgent);
     } else {
       alert('Listas coladas manualmente não podem ser verificadas automaticamente. Adicione novamente colando o conteúdo atualizado.');
       btn.disabled = false; btn.textContent = '🔄 Verificar novidades';
