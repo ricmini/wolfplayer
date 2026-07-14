@@ -137,6 +137,14 @@ http://..."></textarea>
     <div class="card">
       <h3 style="margin-top:0">Listas salvas</h3>
       <div id="listsContainer"><p class="empty">Nenhuma lista ainda. Clique em "Adicionar Lista".</p></div>
+      <div style="display:flex;gap:10px;margin-top:12px;flex-wrap:wrap">
+        <button class="ghost" onclick="exportConfig()">💾 Exportar configuração</button>
+        <button class="ghost" onclick="document.getElementById('importFile').click()">📂 Importar configuração</button>
+        <input type="file" id="importFile" accept=".json" class="hidden" onchange="importConfig(event)">
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-top:8px">
+        As listas ficam guardadas só neste navegador. Para usar em outro navegador ou dispositivo, exporte aqui e importe lá.
+      </p>
     </div>
   </div>
 
@@ -237,6 +245,56 @@ async function storeSet(key, value){
 }
 async function storeDelete(key){
   try{ localStorage.removeItem(key); }catch(e){ console.error('storage delete failed', e); }
+}
+
+// ---------- Backup/restauração entre navegadores/dispositivos ----------
+async function exportConfig(){
+  if(state.lists.length === 0){
+    alert('Não há listas para exportar.');
+    return;
+  }
+  const payload = { version: 1, exportedAt: Date.now(), lists: [] };
+  for(const list of state.lists){
+    const channels = await storeGet(`lists:${list.id}:channels`) || [];
+    payload.lists.push({ meta: list, channels });
+  }
+  const blob = new Blob([JSON.stringify(payload)], {type:'application/json'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `iptv_config_${new Date().toISOString().slice(0,10)}.json`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  alert('Arquivo exportado! Atenção: ele contém suas credenciais (usuário/senha) em texto simples — guarde com cuidado e não compartilhe com outras pessoas.');
+}
+
+function importConfig(event){
+  const file = event.target.files[0];
+  if(!file) return;
+  const reader = new FileReader();
+  reader.onload = async (e) => {
+    try{
+      const payload = JSON.parse(e.target.result);
+      if(!payload.lists || !Array.isArray(payload.lists)) throw new Error('Arquivo inválido.');
+      let imported = 0;
+      for(const item of payload.lists){
+        const exists = state.lists.some(l => l.id === item.meta.id);
+        if(exists) continue;
+        state.lists.push(item.meta);
+        await storeSet(`lists:${item.meta.id}:channels`, item.channels);
+        imported++;
+      }
+      await storeSet('lists:index', state.lists);
+      renderListsView();
+      alert(`${imported} lista(s) importada(s) com sucesso!` + (imported < payload.lists.length ? ` (${payload.lists.length - imported} já existiam e foram ignoradas)` : ''));
+    }catch(err){
+      alert('Não foi possível importar: ' + err.message);
+    }
+    event.target.value = '';
+  };
+  reader.readAsText(file);
 }
 
 // ---------- Init ----------
