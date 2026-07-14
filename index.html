@@ -141,10 +141,34 @@ http://..."></textarea>
         <button class="ghost" onclick="exportConfig()">💾 Exportar configuração</button>
         <button class="ghost" onclick="document.getElementById('importFile').click()">📂 Importar configuração</button>
         <input type="file" id="importFile" accept=".json" class="hidden" onchange="importConfig(event)">
+        <button class="ghost" onclick="toggleLangSettingsPanel()">🌐 Configurar idiomas</button>
       </div>
       <p style="font-size:11px;color:var(--muted);margin-top:8px">
         As listas ficam guardadas só neste navegador. Para usar em outro navegador ou dispositivo, exporte aqui e importe lá.
       </p>
+    </div>
+
+    <div id="langSettingsPanel" class="card hidden">
+      <h4 style="margin-top:0">Configurar detecção de idioma</h4>
+      <label>Símbolos separadores usados nas categorias (ex: <code>|</code>, <code>¦</code>, <code>-</code>)</label>
+      <div id="delimiterList" style="display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px"></div>
+      <div class="row">
+        <input type="text" id="newDelimiter" placeholder="Novo símbolo (ex: ¦)" maxlength="3">
+        <button class="ghost" onclick="addDelimiter()">Adicionar símbolo</button>
+      </div>
+
+      <label style="margin-top:16px">Códigos de idioma customizados</label>
+      <div id="customCodeList" style="margin-bottom:8px"></div>
+      <div class="row">
+        <input type="text" id="newCodeAbbr" placeholder="Código (ex: PT)" maxlength="5">
+        <input type="text" id="newCodeName" placeholder="Nome do idioma (ex: Português)">
+        <button class="ghost" onclick="addCustomCode()">Adicionar</button>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin-top:8px">
+        Exemplo: se a categoria é <code>¦PT¦ Filmes</code>, adicione o símbolo <code>¦</code> na lista acima (o código PT já é reconhecido por padrão).
+      </p>
+      <button class="primary" style="margin-top:10px" onclick="reapplyLanguageDetection()">🔁 Reaplicar na lista aberta agora</button>
+      <div id="langSettingsStatus" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
     </div>
   </div>
 
@@ -247,6 +271,83 @@ async function storeDelete(key){
   try{ localStorage.removeItem(key); }catch(e){ console.error('storage delete failed', e); }
 }
 
+// ---------- Configurações de idioma (delimitadores e códigos customizados) ----------
+function toggleLangSettingsPanel(){
+  const panel = document.getElementById('langSettingsPanel');
+  panel.classList.toggle('hidden');
+  if(!panel.classList.contains('hidden')) renderLangSettingsPanel();
+}
+
+function renderLangSettingsPanel(){
+  const delimEl = document.getElementById('delimiterList');
+  delimEl.innerHTML = langSettings.delimiters.map(d => `
+    <span style="background:var(--bg2);border:1px solid var(--border);padding:4px 10px;border-radius:6px;font-size:13px;display:flex;align-items:center;gap:6px">
+      <code>${escapeHtml(d)}</code>
+      <span style="cursor:pointer;color:var(--danger)" onclick="removeDelimiter('${d.replace(/'/g,"\\'")}')">✕</span>
+    </span>
+  `).join('') || '<span style="color:var(--muted);font-size:12px">Nenhum símbolo configurado.</span>';
+
+  const codeEl = document.getElementById('customCodeList');
+  const entries = Object.entries(langSettings.customCodes);
+  codeEl.innerHTML = entries.map(([code, name]) => `
+    <div style="display:flex;align-items:center;gap:8px;font-size:13px;padding:4px 0;border-bottom:1px solid var(--border)">
+      <span style="flex:1"><code>${escapeHtml(code)}</code> → ${escapeHtml(name)}</span>
+      <span style="cursor:pointer;color:var(--danger)" onclick="removeCustomCode('${code.replace(/'/g,"\\'")}')">✕</span>
+    </div>
+  `).join('') || '<span style="color:var(--muted);font-size:12px">Nenhum código customizado.</span>';
+}
+
+async function addDelimiter(){
+  const input = document.getElementById('newDelimiter');
+  const val = input.value.trim();
+  if(!val) return;
+  if(!langSettings.delimiters.includes(val)){
+    langSettings.delimiters.push(val);
+    await saveLangSettings();
+  }
+  input.value = '';
+  renderLangSettingsPanel();
+}
+
+async function removeDelimiter(d){
+  langSettings.delimiters = langSettings.delimiters.filter(x => x !== d);
+  await saveLangSettings();
+  renderLangSettingsPanel();
+}
+
+async function addCustomCode(){
+  const codeInput = document.getElementById('newCodeAbbr');
+  const nameInput = document.getElementById('newCodeName');
+  const code = codeInput.value.trim().toUpperCase();
+  const name = nameInput.value.trim();
+  if(!code || !name) return;
+  langSettings.customCodes[code] = name;
+  await saveLangSettings();
+  codeInput.value = ''; nameInput.value = '';
+  renderLangSettingsPanel();
+}
+
+async function removeCustomCode(code){
+  delete langSettings.customCodes[code];
+  await saveLangSettings();
+  renderLangSettingsPanel();
+}
+
+// Reaplica a detecção de idioma nos canais já carregados, sem precisar buscar tudo de novo
+async function reapplyLanguageDetection(){
+  const statusEl = document.getElementById('langSettingsStatus');
+  if(!state.currentListId || state.currentChannels.length === 0){
+    statusEl.textContent = 'Abra uma lista primeiro (na aba "Minhas Listas") para reaplicar nela.';
+    return;
+  }
+  state.currentChannels.forEach(c => { c.language = detectLanguage(c.group); });
+  await storeSet(`lists:${state.currentListId}:channels`, state.currentChannels);
+  const languages = ['Todos os idiomas', ...new Set(state.currentChannels.map(c=>c.language || 'Outro'))];
+  const langSel = document.getElementById('languageFilter');
+  if(langSel) langSel.innerHTML = languages.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+  statusEl.textContent = `Reaplicado em ${state.currentChannels.length} itens. Volte para "Minhas Listas" e abra a lista para ver o filtro atualizado.`;
+}
+
 // ---------- Backup/restauração entre navegadores/dispositivos ----------
 async function exportConfig(){
   if(state.lists.length === 0){
@@ -299,6 +400,7 @@ function importConfig(event){
 
 // ---------- Init ----------
 async function init(){
+  await loadLangSettings();
   const idx = await storeGet('lists:index');
   state.lists = idx || [];
   renderListsView();
@@ -333,20 +435,45 @@ const LANG_CODES = {
   'CN':'Chinês','JP':'Japonês','KR':'Coreano'
 };
 
+// Configurações de idioma personalizáveis pelo usuário (delimitadores + códigos extra)
+let langSettings = { delimiters: ['|','¦','-'], customCodes: {} };
+
+async function loadLangSettings(){
+  const saved = await storeGet('settings:language');
+  if(saved){
+    langSettings.delimiters = saved.delimiters && saved.delimiters.length ? saved.delimiters : langSettings.delimiters;
+    langSettings.customCodes = saved.customCodes || {};
+  }
+}
+
+async function saveLangSettings(){
+  await storeSet('settings:language', langSettings);
+}
+
+function escapeRegexChar(ch){
+  return ch.replace(/[.*+?^${}()|[\]\\-]/g, '\\$&');
+}
+
 function detectLanguage(group){
   if(!group) return 'Outro';
   const upper = group.toUpperCase();
-  // Padrão comum: "(V|PT)", "(V|FR)", "(S|PT)" etc - código logo após o "|"
-  const pipeMatch = upper.match(/\|\s*([A-Z]{2,3})\b/);
-  if(pipeMatch && LANG_CODES[pipeMatch[1]]) return LANG_CODES[pipeMatch[1]];
-  // Fallback: formatos tipo "FR - Filmes" ou "FR| Filmes" sem parênteses
-  const parts = group.split(/[|\-]/).map(p=>p.trim().toUpperCase()).filter(Boolean);
+  const allCodes = { ...LANG_CODES, ...langSettings.customCodes };
+  const delimClass = langSettings.delimiters.map(escapeRegexChar).join('');
+  // Padrão comum: "(V|PT)", "(V¦FR)", "V-PT" etc - código logo após um delimitador
+  const pattern = new RegExp(`[${delimClass}]\\s*([A-Z]{2,3})\\b`);
+  const pipeMatch = upper.match(pattern);
+  if(pipeMatch && allCodes[pipeMatch[1]]) return allCodes[pipeMatch[1]];
+  // Fallback: divide por qualquer delimitador configurado e testa cada pedaço
+  const splitRegex = new RegExp(`[${delimClass}]`);
+  const parts = group.split(splitRegex).map(p=>p.trim().toUpperCase()).filter(Boolean);
   for(const p of parts){
     const word = p.replace(/[^A-Z]/g,'');
-    if(LANG_CODES[word]) return LANG_CODES[word];
+    if(allCodes[word]) return allCodes[word];
   }
   return 'Outro';
 }
+
+
 
 function detectContentType(url, group){
   const lower = url.toLowerCase();
