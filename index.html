@@ -1025,6 +1025,9 @@ async function refreshCurrentList(){
     const groups = ['Todos', ...new Set(newChannels.map(c=>c.group))];
     document.getElementById('groupFilter').innerHTML = groups.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
 
+    const languages = ['Todos os idiomas', ...new Set(newChannels.map(c=>c.language || 'Outro'))];
+    document.getElementById('languageFilter').innerHTML = languages.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+
     if(added.length > 0){
       document.getElementById('newBannerText').textContent = `✨ ${added.length} novo(s) item(ns) encontrado(s): ${added.slice(0,5).map(c=>c.name).join(', ')}${added.length>5?'...':''}`;
       document.getElementById('newBanner').classList.remove('hidden');
