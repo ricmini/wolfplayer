@@ -168,7 +168,31 @@ http://..."></textarea>
         <option value="recent">Ordenar: Mais recentes</option>
       </select>
       <button class="ghost" id="refreshBtn" onclick="refreshCurrentList()">🔄 Verificar novidades</button>
+      <button class="ghost" onclick="toggleExportPanel()">⬇️ Exportar M3U</button>
       <button class="ghost" style="color:var(--danger)" onclick="deleteCurrentList()">Excluir lista</button>
+    </div>
+
+    <div id="exportPanel" class="card hidden" style="margin-bottom:14px">
+      <h4 style="margin-top:0">Exportar Filmes/Séries por data de adição</h4>
+      <div class="row" style="margin-bottom:6px">
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text)"><input type="checkbox" id="expMovies" checked> Incluir Filmes</label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text)"><input type="checkbox" id="expSeries" checked> Incluir Séries</label>
+      </div>
+      <div class="row">
+        <div>
+          <label>Adicionado a partir de</label>
+          <input type="date" id="expFrom">
+        </div>
+        <div>
+          <label>Adicionado até</label>
+          <input type="date" id="expTo">
+        </div>
+      </div>
+      <p style="font-size:11px;color:var(--muted);margin:6px 0 0">
+        Deixe as datas em branco para exportar sem limite de data. Séries incluídas exigem uma busca extra de episódios (pode demorar alguns segundos por série).
+      </p>
+      <button class="primary" onclick="exportM3U()">Gerar arquivo M3U</button>
+      <div id="exportStatus" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
     </div>
 
     <div class="grid" id="channelsGrid"></div>
@@ -694,6 +718,99 @@ function playEpisode(name, url){
   if(old) old.remove();
   document.getElementById('video').classList.remove('hidden');
   playChannel({name, url, contentType:'movie'});
+}
+
+function toggleExportPanel(){
+  document.getElementById('exportPanel').classList.toggle('hidden');
+}
+
+function m3uEscape(name){
+  return (name || '').replace(/[\r\n]/g, ' ');
+}
+
+async function exportM3U(){
+  const includeMovies = document.getElementById('expMovies').checked;
+  const includeSeries = document.getElementById('expSeries').checked;
+  const fromVal = document.getElementById('expFrom').value;
+  const toVal = document.getElementById('expTo').value;
+  const statusEl = document.getElementById('exportStatus');
+
+  if(!includeMovies && !includeSeries){
+    statusEl.textContent = 'Selecione ao menos um tipo (Filmes ou Séries).';
+    return;
+  }
+
+  const fromTs = fromVal ? new Date(fromVal + 'T00:00:00').getTime() : null;
+  const toTs = toVal ? new Date(toVal + 'T23:59:59').getTime() : null;
+
+  const inRange = (addedAt) => {
+    if(addedAt == null) return false;
+    if(fromTs && addedAt < fromTs) return false;
+    if(toTs && addedAt > toTs) return false;
+    return true;
+  };
+
+  const matched = state.currentChannels.filter(c=>{
+    if(includeMovies && c.contentType === 'movie' && inRange(c.addedAt)) return true;
+    if(includeSeries && c.contentType === 'series' && inRange(c.addedAt)) return true;
+    return false;
+  });
+
+  if(matched.length === 0){
+    statusEl.textContent = 'Nenhum filme/série encontrado nesse intervalo de datas.';
+    return;
+  }
+
+  const movieEntries = matched.filter(c=>c.contentType === 'movie');
+  const seriesEntries = matched.filter(c=>c.contentType === 'series');
+
+  if(seriesEntries.length > 25){
+    if(!confirm(`${seriesEntries.length} séries encontradas. Buscar os episódios de todas pode demorar um pouco. Continuar?`)) return;
+  }
+
+  const lines = ['#EXTM3U'];
+
+  movieEntries.forEach(c=>{
+    lines.push(`#EXTINF:-1 tvg-logo="${c.logo||''}" group-title="${m3uEscape(c.group)}",${m3uEscape(c.name)}`);
+    lines.push(c.url);
+  });
+
+  if(seriesEntries.length > 0){
+    const list = state.lists.find(l=>l.id === state.currentListId);
+    const { host, user, pass, userAgent } = list.source;
+    let done = 0;
+    for(const s of seriesEntries){
+      done++;
+      statusEl.textContent = `Buscando episódios... (${done}/${seriesEntries.length}) ${s.name}`;
+      try{
+        const info = await fetchXtreamJson(host, user, pass, 'get_series_info', userAgent, `&series_id=${s.seriesId}`);
+        const seasons = info.episodes || {};
+        Object.keys(seasons).forEach(seasonNum=>{
+          seasons[seasonNum].forEach(ep=>{
+            const epUrl = `${host.replace(/\/+$/,'')}/series/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${ep.id}.${ep.container_extension || 'mp4'}`;
+            const epName = `${s.name} - S${String(seasonNum).padStart(2,'0')}E${String(ep.episode_num).padStart(2,'0')} - ${ep.title||''}`;
+            lines.push(`#EXTINF:-1 tvg-logo="${s.logo||''}" group-title="${m3uEscape(s.group)}",${m3uEscape(epName)}`);
+            lines.push(epUrl);
+          });
+        });
+      }catch(e){
+        lines.push(`# Falha ao buscar episódios de "${s.name}": ${e.message}`);
+      }
+    }
+  }
+
+  const blob = new Blob([lines.join('\n')], {type:'audio/x-mpegurl'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  const dateTag = new Date().toISOString().slice(0,10);
+  a.href = url;
+  a.download = `exportado_${dateTag}.m3u`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+
+  statusEl.textContent = `Pronto! ${movieEntries.length} filme(s) e ${seriesEntries.length} série(s) exportados.`;
 }
 
 function copyChannelUrl(url){
