@@ -191,10 +191,21 @@ http://..."></textarea>
         </div>
       </div>
       <p style="font-size:11px;color:var(--muted);margin:6px 0 0">
-        Deixe as datas em branco para exportar sem limite de data. Séries incluídas exigem uma busca extra de episódios (pode demorar alguns segundos por série).
+        Deixe as datas em branco para exportar sem limite de data.
       </p>
-      <button class="primary" onclick="exportM3U()">Gerar arquivo M3U</button>
+      <button class="primary" onclick="previewExportMatches()">Buscar correspondências</button>
       <div id="exportStatus" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+
+      <div id="exportPreview" class="hidden" style="margin-top:12px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text);display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="expSelectAll" checked onchange="toggleAllExportSelection()"> Selecionar todos
+          </label>
+          <span id="exportSelCount" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div id="exportList" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+        <button class="primary" style="margin-top:10px" onclick="downloadSelectedExport()">Baixar M3U dos selecionados</button>
+      </div>
     </div>
 
     <div class="grid" id="channelsGrid"></div>
@@ -822,27 +833,31 @@ function playEpisode(name, url){
 
 function toggleExportPanel(){
   document.getElementById('exportPanel').classList.toggle('hidden');
+  document.getElementById('exportPreview').classList.add('hidden');
 }
 
 function m3uEscape(name){
   return (name || '').replace(/[\r\n]/g, ' ');
 }
 
-async function exportM3U(){
+// Etapa 1: filtra por tipo/data e mostra lista com checkboxes para o usuário revisar
+function previewExportMatches(){
   const includeMovies = document.getElementById('expMovies').checked;
   const includeSeries = document.getElementById('expSeries').checked;
   const fromVal = document.getElementById('expFrom').value;
   const toVal = document.getElementById('expTo').value;
   const statusEl = document.getElementById('exportStatus');
+  const previewEl = document.getElementById('exportPreview');
+  const listEl = document.getElementById('exportList');
 
   if(!includeMovies && !includeSeries){
     statusEl.textContent = 'Selecione ao menos um tipo (Filmes ou Séries).';
+    previewEl.classList.add('hidden');
     return;
   }
 
   const fromTs = fromVal ? new Date(fromVal + 'T00:00:00').getTime() : null;
   const toTs = toVal ? new Date(toVal + 'T23:59:59').getTime() : null;
-
   const inRange = (addedAt) => {
     if(addedAt == null) return false;
     if(fromTs && addedAt < fromTs) return false;
@@ -858,14 +873,57 @@ async function exportM3U(){
 
   if(matched.length === 0){
     statusEl.textContent = 'Nenhum filme/série encontrado nesse intervalo de datas.';
+    previewEl.classList.add('hidden');
     return;
   }
 
-  const movieEntries = matched.filter(c=>c.contentType === 'movie');
-  const seriesEntries = matched.filter(c=>c.contentType === 'series');
+  state._exportMatched = matched;
+  statusEl.textContent = '';
+
+  const typeIcon = {movie:'🎬', series:'📺'};
+  listEl.innerHTML = matched.map((c, idx) => {
+    const dateStr = c.addedAt ? new Date(c.addedAt).toLocaleDateString('pt-BR') : '';
+    return `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text)">
+        <input type="checkbox" class="expItemCheck" data-idx="${idx}" checked onchange="updateExportSelCount()">
+        <span style="flex:1">${typeIcon[c.contentType]||''} ${escapeHtml(c.name)} <span style="color:var(--muted);font-size:11px">(${escapeHtml(c.group)}${dateStr ? ' · '+dateStr : ''})</span></span>
+      </label>`;
+  }).join('');
+
+  document.getElementById('expSelectAll').checked = true;
+  previewEl.classList.remove('hidden');
+  updateExportSelCount();
+}
+
+function toggleAllExportSelection(){
+  const checked = document.getElementById('expSelectAll').checked;
+  document.querySelectorAll('.expItemCheck').forEach(cb => cb.checked = checked);
+  updateExportSelCount();
+}
+
+function updateExportSelCount(){
+  const total = document.querySelectorAll('.expItemCheck').length;
+  const checked = document.querySelectorAll('.expItemCheck:checked').length;
+  document.getElementById('exportSelCount').textContent = `${checked} de ${total} selecionado(s)`;
+}
+
+// Etapa 2: gera e baixa o M3U só com os itens marcados
+async function downloadSelectedExport(){
+  const statusEl = document.getElementById('exportStatus');
+  const matched = state._exportMatched || [];
+  const selectedIdx = Array.from(document.querySelectorAll('.expItemCheck:checked')).map(cb => parseInt(cb.dataset.idx));
+  const selected = selectedIdx.map(i => matched[i]);
+
+  if(selected.length === 0){
+    statusEl.textContent = 'Selecione ao menos um item.';
+    return;
+  }
+
+  const movieEntries = selected.filter(c=>c.contentType === 'movie');
+  const seriesEntries = selected.filter(c=>c.contentType === 'series');
 
   if(seriesEntries.length > 25){
-    if(!confirm(`${seriesEntries.length} séries encontradas. Buscar os episódios de todas pode demorar um pouco. Continuar?`)) return;
+    if(!confirm(`${seriesEntries.length} séries selecionadas. Buscar os episódios de todas pode demorar um pouco. Continuar?`)) return;
   }
 
   const lines = ['#EXTM3U'];
