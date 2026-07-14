@@ -482,9 +482,17 @@ function playChannel(c){
   const video = document.getElementById('video');
   const title = document.getElementById('player-title');
   wrap.classList.remove('hidden');
-  title.textContent = c.name;
 
   if(state.hls){ state.hls.destroy(); state.hls = null; }
+
+  title.innerHTML = `
+    <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap">
+      <span style="flex:1">${escapeHtml(c.name)}</span>
+      <a href="vlc://${c.url}" style="color:var(--accent2);text-decoration:none;font-size:12px;border:1px solid var(--border);padding:4px 10px;border-radius:6px;">▶ Abrir no VLC</a>
+      <button class="ghost" style="font-size:12px;padding:4px 10px" onclick="copyChannelUrl('${c.url.replace(/'/g,"\\'")}')">📋 Copiar link</button>
+    </div>
+    <div id="playerErrorMsg" style="color:var(--danger);font-size:12px;margin-top:6px;"></div>
+  `;
 
   if(c.url.includes('.m3u8') && window.Hls && Hls.isSupported()){
     const hls = new Hls();
@@ -492,15 +500,27 @@ function playChannel(c){
     hls.attachMedia(video);
     hls.on(Hls.Events.ERROR, (evt, data)=>{
       if(data.fatal){
-        title.textContent = c.name + ' — erro ao reproduzir (o servidor pode bloquear reprodução no navegador)';
+        document.getElementById('playerErrorMsg').textContent =
+          'Não foi possível reproduzir aqui no navegador (o servidor pode bloquear ou exigir https). Use "Abrir no VLC" ou "Copiar link" acima.';
       }
     });
     state.hls = hls;
   } else {
     video.src = c.url;
   }
-  video.play().catch(()=>{});
+  video.play().catch(()=>{
+    document.getElementById('playerErrorMsg').textContent =
+      'Não foi possível reproduzir automaticamente. Use "Abrir no VLC" ou "Copiar link" acima.';
+  });
   wrap.scrollIntoView({behavior:'smooth'});
+}
+
+function copyChannelUrl(url){
+  navigator.clipboard.writeText(url).then(()=>{
+    alert('Link copiado! Cole no VLC (Rede > Abrir fluxo de rede) ou em outro player.');
+  }).catch(()=>{
+    prompt('Copie o link manualmente:', url);
+  });
 }
 
 // ---------- Refresh / detect new content ----------
