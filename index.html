@@ -143,6 +143,7 @@ http://..."></textarea>
   <!-- VIEW: CHANNELS -->
   <div id="view-channels" class="hidden">
     <span class="back-link" onclick="showView('lists')">← Voltar para listas</span>
+    <div id="typeSummary" style="font-size:12px;color:var(--muted);margin-bottom:10px"></div>
 
     <div id="newBanner" class="banner hidden">
       <span id="newBannerText"></span>
@@ -163,6 +164,7 @@ http://..."></textarea>
         <option value="series">📺 Séries</option>
       </select>
       <select id="groupFilter" onchange="renderChannels()"></select>
+      <select id="languageFilter" onchange="renderChannels()"></select>
       <select id="sortOrder" onchange="renderChannels()">
         <option value="name">Ordenar: Nome</option>
         <option value="recent">Ordenar: Mais recentes</option>
@@ -252,6 +254,27 @@ function updateAddForm(){
 }
 
 // ---------- M3U Parsing ----------
+const LANG_CODES = {
+  'FR':'Francês','FRA':'Francês','PT':'Português','PT-BR':'Português','BR':'Português (BR)',
+  'EN':'Inglês','UK':'Inglês','US':'Inglês','ENG':'Inglês',
+  'ES':'Espanhol','SPA':'Espanhol','DE':'Alemão','GER':'Alemão','IT':'Italiano','ITA':'Italiano',
+  'NL':'Holandês','AR':'Árabe','ARA':'Árabe','TR':'Turco','RU':'Russo','RUS':'Russo',
+  'PL':'Polonês','GR':'Grego','RO':'Romeno','BG':'Búlgaro','SE':'Sueco','NO':'Norueguês',
+  'DK':'Dinamarquês','FI':'Finlandês','ALB':'Albanês','HI':'Hindi','IN':'Hindi',
+  'CN':'Chinês','JP':'Japonês','KR':'Coreano'
+};
+
+function detectLanguage(group){
+  if(!group) return 'Outro';
+  const parts = group.split('|').map(p=>p.trim().toUpperCase()).filter(Boolean);
+  for(const p of parts){
+    const firstWord = p.split(/\s+/)[0];
+    if(LANG_CODES[p]) return LANG_CODES[p];
+    if(LANG_CODES[firstWord]) return LANG_CODES[firstWord];
+  }
+  return 'Outro';
+}
+
 function detectContentType(url, group){
   const lower = url.toLowerCase();
   if(lower.includes('/movie/')) return 'movie';
@@ -282,6 +305,7 @@ function parseM3U(text){
       current.url = line;
       current.key = (current.tvgId || current.name) + '|' + current.url;
       current.contentType = detectContentType(current.url, current.group);
+      current.language = detectLanguage(current.group);
       channels.push(current);
       current = null;
     }
@@ -335,9 +359,11 @@ async function fetchXtreamFull(host, user, pass, userAgent){
     (liveCats || []).forEach(c => catMap[c.category_id] = c.category_name);
     const liveStreams = await fetchXtreamJson(host, user, pass, 'get_live_streams', userAgent);
     (liveStreams || []).forEach(s => {
+      const group = catMap[s.category_id] || 'Ao vivo';
       channels.push({
         name: s.name, logo: s.stream_icon || '',
-        group: catMap[s.category_id] || 'Ao vivo',
+        group,
+        language: detectLanguage(group),
         url: `${host.replace(/\/+$/,'')}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.m3u8`,
         contentType: 'live',
         addedAt: s.added ? parseInt(s.added) * 1000 : null,
@@ -353,9 +379,11 @@ async function fetchXtreamFull(host, user, pass, userAgent){
     (vodCats || []).forEach(c => catMap[c.category_id] = c.category_name);
     const vodStreams = await fetchXtreamJson(host, user, pass, 'get_vod_streams', userAgent);
     (vodStreams || []).forEach(s => {
+      const group = catMap[s.category_id] || 'Filmes';
       channels.push({
         name: s.name, logo: s.stream_icon || '',
-        group: catMap[s.category_id] || 'Filmes',
+        group,
+        language: detectLanguage(group),
         url: `${host.replace(/\/+$/,'')}/movie/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.${s.container_extension || 'mp4'}`,
         contentType: 'movie',
         addedAt: s.added ? parseInt(s.added) * 1000 : null,
@@ -371,9 +399,11 @@ async function fetchXtreamFull(host, user, pass, userAgent){
     (serCats || []).forEach(c => catMap[c.category_id] = c.category_name);
     const series = await fetchXtreamJson(host, user, pass, 'get_series', userAgent);
     (series || []).forEach(s => {
+      const group = catMap[s.category_id] || 'Séries';
       channels.push({
         name: s.name, logo: s.cover || '',
-        group: catMap[s.category_id] || 'Séries',
+        group,
+        language: detectLanguage(group),
         url: '', // séries exigem escolher episódio - ver playChannel
         seriesId: s.series_id,
         contentType: 'series',
@@ -598,7 +628,18 @@ async function openList(id){
   const groups = ['Todos', ...new Set(channels.map(c=>c.group))];
   const sel = document.getElementById('groupFilter');
   sel.innerHTML = groups.map(g=>`<option value="${escapeHtml(g)}">${escapeHtml(g)}</option>`).join('');
+
+  const languages = ['Todos os idiomas', ...new Set(channels.map(c=>c.language || 'Outro'))];
+  document.getElementById('languageFilter').innerHTML = languages.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+
   document.getElementById('searchInput').value = '';
+  document.getElementById('typeFilter').value = '';
+
+  const liveCount = channels.filter(c=>c.contentType==='live'||!c.contentType).length;
+  const movieCount = channels.filter(c=>c.contentType==='movie').length;
+  const seriesCount = channels.filter(c=>c.contentType==='series').length;
+  document.getElementById('typeSummary').textContent =
+    `📡 ${liveCount} ao vivo · 🎬 ${movieCount} filmes · 📺 ${seriesCount} séries`;
 
   if(state.newKeys.size > 0){
     document.getElementById('newBannerText').textContent =
@@ -617,6 +658,7 @@ function renderChannels(){
   const search = document.getElementById('searchInput').value.toLowerCase();
   const group = document.getElementById('groupFilter').value;
   const type = document.getElementById('typeFilter').value;
+  const language = document.getElementById('languageFilter').value;
   const sortBy = document.getElementById('sortOrder').value;
   const grid = document.getElementById('channelsGrid');
   grid.innerHTML = '';
@@ -625,7 +667,8 @@ function renderChannels(){
     const matchSearch = !search || c.name.toLowerCase().includes(search);
     const matchGroup = !group || group === 'Todos' || c.group === group;
     const matchType = !type || c.contentType === type || (!c.contentType && type === 'live');
-    return matchSearch && matchGroup && matchType;
+    const matchLanguage = !language || language === 'Todos os idiomas' || (c.language || 'Outro') === language;
+    return matchSearch && matchGroup && matchType && matchLanguage;
   });
 
   if(sortBy === 'recent'){
