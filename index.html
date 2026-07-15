@@ -222,6 +222,8 @@ http://..."></textarea>
           <input type="date" id="expTo">
         </div>
       </div>
+      <label>Idioma</label>
+      <select id="expLanguageFilter"><option value="">Todos os idiomas</option></select>
       <p style="font-size:11px;color:var(--muted);margin:6px 0 0">
         Deixe as datas em branco para exportar sem limite de data.
       </p>
@@ -1026,8 +1028,15 @@ function playEpisode(name, url){
 }
 
 function toggleExportPanel(){
-  document.getElementById('exportPanel').classList.toggle('hidden');
+  const panel = document.getElementById('exportPanel');
+  panel.classList.toggle('hidden');
   document.getElementById('exportPreview').classList.add('hidden');
+  if(!panel.classList.contains('hidden')){
+    const languages = ['', ...new Set(state.currentChannels.map(c=>c.language || 'Outro'))];
+    document.getElementById('expLanguageFilter').innerHTML = languages.map(l =>
+      `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
+    ).join('');
+  }
 }
 
 function m3uEscape(name){
@@ -1051,6 +1060,7 @@ function previewExportMatches(){
   const includeSeries = document.getElementById('expSeries').checked;
   const fromVal = document.getElementById('expFrom').value;
   const toVal = document.getElementById('expTo').value;
+  const languageFilter = document.getElementById('expLanguageFilter').value;
   const statusEl = document.getElementById('exportStatus');
   const previewEl = document.getElementById('exportPreview');
   const listEl = document.getElementById('exportList');
@@ -1069,15 +1079,16 @@ function previewExportMatches(){
     if(toTs && addedAt > toTs) return false;
     return true;
   };
+  const matchesLanguage = (c) => !languageFilter || (c.language || 'Outro') === languageFilter;
 
   const matched = state.currentChannels.filter(c=>{
-    if(includeMovies && c.contentType === 'movie' && inRange(c.addedAt)) return true;
-    if(includeSeries && c.contentType === 'series' && inRange(c.addedAt)) return true;
+    if(includeMovies && c.contentType === 'movie' && inRange(c.addedAt) && matchesLanguage(c)) return true;
+    if(includeSeries && c.contentType === 'series' && inRange(c.addedAt) && matchesLanguage(c)) return true;
     return false;
   });
 
   if(matched.length === 0){
-    statusEl.textContent = 'Nenhum filme/série encontrado nesse intervalo de datas.';
+    statusEl.textContent = 'Nenhum filme/série encontrado com esses filtros.';
     previewEl.classList.add('hidden');
     return;
   }
