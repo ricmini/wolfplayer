@@ -197,6 +197,7 @@ http://..."></textarea>
       </select>
       <select id="groupFilter" onchange="renderChannels()"></select>
       <select id="languageFilter" onchange="renderChannels()"></select>
+      <select id="yearFilter" onchange="renderChannels()"></select>
       <select id="sortOrder" onchange="renderChannels()">
         <option value="name">Ordenar: Nome</option>
         <option value="recent">Ordenar: Mais recentes</option>
@@ -207,7 +208,10 @@ http://..."></textarea>
     </div>
 
     <div id="exportPanel" class="card hidden" style="margin-bottom:14px">
-      <h4 style="margin-top:0">Exportar Filmes/Séries por data de adição</h4>
+      <div style="display:flex;align-items:center;justify-content:space-between">
+        <h4 style="margin:0">Exportar Filmes/Séries por data de adição</h4>
+        <button class="ghost" style="padding:4px 10px;font-size:16px;line-height:1" onclick="toggleExportPanel()">✕</button>
+      </div>
       <div class="row" style="margin-bottom:6px">
         <label style="display:flex;align-items:center;gap:6px;color:var(--text)"><input type="checkbox" id="expMovies" checked> Incluir Filmes</label>
         <label style="display:flex;align-items:center;gap:6px;color:var(--text)"><input type="checkbox" id="expSeries" checked> Incluir Séries</label>
@@ -222,8 +226,16 @@ http://..."></textarea>
           <input type="date" id="expTo">
         </div>
       </div>
-      <label>Idioma</label>
-      <select id="expLanguageFilter"><option value="">Todos os idiomas</option></select>
+      <div class="row">
+        <div>
+          <label>Idioma</label>
+          <select id="expLanguageFilter"><option value="">Todos os idiomas</option></select>
+        </div>
+        <div>
+          <label>Ano (detectado no título)</label>
+          <select id="expYearFilter"><option value="">Todos os anos</option></select>
+        </div>
+      </div>
       <p style="font-size:11px;color:var(--muted);margin:6px 0 0">
         Deixe as datas em branco para exportar sem limite de data.
       </p>
@@ -351,7 +363,7 @@ async function reapplyLanguageDetection(){
     statusEl.textContent = 'Abra uma lista primeiro (na aba "Minhas Listas") para reaplicar nela.';
     return;
   }
-  state.currentChannels.forEach(c => { c.language = detectLanguage(c.group); });
+  state.currentChannels.forEach(c => { c.language = detectLanguage(c.group); c.year = extractYearFromTitle(c.name); });
   await storeSet(`lists:${state.currentListId}:channels`, state.currentChannels);
   const languages = ['Todos os idiomas', ...new Set(state.currentChannels.map(c=>c.language || 'Outro'))];
   const langSel = document.getElementById('languageFilter');
@@ -486,6 +498,14 @@ function detectLanguage(group){
 
 
 
+function extractYearFromTitle(name){
+  if(!name) return null;
+  const m = name.match(/\((19|20)\d{2}\)/) || name.match(/\[(19|20)\d{2}\]/) || name.match(/\b((19|20)\d{2})\s*$/);
+  if(!m) return null;
+  const yearMatch = m[0].match(/(19|20)\d{2}/);
+  return yearMatch ? yearMatch[0] : null;
+}
+
 function detectContentType(url, group){
   const lower = url.toLowerCase();
   if(lower.includes('/movie/')) return 'movie';
@@ -517,6 +537,7 @@ function parseM3U(text){
       current.key = (current.tvgId || current.name) + '|' + current.url;
       current.contentType = detectContentType(current.url, current.group);
       current.language = detectLanguage(current.group);
+      current.year = extractYearFromTitle(current.name);
       channels.push(current);
       current = null;
     }
@@ -591,7 +612,7 @@ async function fetchXtreamFull(host, user, pass, userAgent, onProgress){
       (s, catName) => {
         const group = catName || 'Ao vivo';
         return {
-          name: s.name, logo: s.stream_icon || '', group, language: detectLanguage(group),
+          name: s.name, logo: s.stream_icon || '', group, language: detectLanguage(group), year: extractYearFromTitle(s.name),
           url: `${base}/live/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.m3u8`,
           contentType: 'live',
           addedAt: s.added ? parseInt(s.added) * 1000 : null,
@@ -607,7 +628,7 @@ async function fetchXtreamFull(host, user, pass, userAgent, onProgress){
       (s, catName) => {
         const group = catName || 'Filmes';
         return {
-          name: s.name, logo: s.stream_icon || '', group, language: detectLanguage(group),
+          name: s.name, logo: s.stream_icon || '', group, language: detectLanguage(group), year: extractYearFromTitle(s.name),
           url: `${base}/movie/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${s.stream_id}.${s.container_extension || 'mp4'}`,
           contentType: 'movie',
           addedAt: s.added ? parseInt(s.added) * 1000 : null,
@@ -623,7 +644,7 @@ async function fetchXtreamFull(host, user, pass, userAgent, onProgress){
       (s, catName) => {
         const group = catName || 'Séries';
         return {
-          name: s.name, logo: s.cover || '', group, language: detectLanguage(group),
+          name: s.name, logo: s.cover || '', group, language: detectLanguage(group), year: extractYearFromTitle(s.name),
           url: '', seriesId: s.series_id,
           contentType: 'series',
           addedAt: s.last_modified ? parseInt(s.last_modified) * 1000 : null,
@@ -856,6 +877,10 @@ async function openList(id){
   const languages = ['Todos os idiomas', ...new Set(channels.map(c=>c.language || 'Outro'))];
   document.getElementById('languageFilter').innerHTML = languages.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
 
+  const yearList = [...new Set(channels.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
+  const years = ['Todos os anos', ...yearList];
+  document.getElementById('yearFilter').innerHTML = years.map(y=>`<option value="${escapeHtml(y)}">${escapeHtml(y)}</option>`).join('');
+
   document.getElementById('searchInput').value = '';
   document.getElementById('typeFilter').value = '';
 
@@ -883,6 +908,7 @@ function renderChannels(){
   const group = document.getElementById('groupFilter').value;
   const type = document.getElementById('typeFilter').value;
   const language = document.getElementById('languageFilter').value;
+  const year = document.getElementById('yearFilter').value;
   const sortBy = document.getElementById('sortOrder').value;
   const grid = document.getElementById('channelsGrid');
   grid.innerHTML = '';
@@ -892,7 +918,8 @@ function renderChannels(){
     const matchGroup = !group || group === 'Todos' || c.group === group;
     const matchType = !type || c.contentType === type || (!c.contentType && type === 'live');
     const matchLanguage = !language || language === 'Todos os idiomas' || (c.language || 'Outro') === language;
-    return matchSearch && matchGroup && matchType && matchLanguage;
+    const matchYear = !year || year === 'Todos os anos' || c.year === year;
+    return matchSearch && matchGroup && matchType && matchLanguage && matchYear;
   });
 
   if(sortBy === 'recent'){
@@ -1036,6 +1063,11 @@ function toggleExportPanel(){
     document.getElementById('expLanguageFilter').innerHTML = languages.map(l =>
       `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
     ).join('');
+
+    const yearList = [...new Set(state.currentChannels.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
+    document.getElementById('expYearFilter').innerHTML = ['', ...yearList].map(y =>
+      `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
+    ).join('');
   }
 }
 
@@ -1061,6 +1093,7 @@ function previewExportMatches(){
   const fromVal = document.getElementById('expFrom').value;
   const toVal = document.getElementById('expTo').value;
   const languageFilter = document.getElementById('expLanguageFilter').value;
+  const yearFilter = document.getElementById('expYearFilter').value;
   const statusEl = document.getElementById('exportStatus');
   const previewEl = document.getElementById('exportPreview');
   const listEl = document.getElementById('exportList');
@@ -1080,10 +1113,11 @@ function previewExportMatches(){
     return true;
   };
   const matchesLanguage = (c) => !languageFilter || (c.language || 'Outro') === languageFilter;
+  const matchesYear = (c) => !yearFilter || c.year === yearFilter;
 
   const matched = state.currentChannels.filter(c=>{
-    if(includeMovies && c.contentType === 'movie' && inRange(c.addedAt) && matchesLanguage(c)) return true;
-    if(includeSeries && c.contentType === 'series' && inRange(c.addedAt) && matchesLanguage(c)) return true;
+    if(includeMovies && c.contentType === 'movie' && inRange(c.addedAt) && matchesLanguage(c) && matchesYear(c)) return true;
+    if(includeSeries && c.contentType === 'series' && inRange(c.addedAt) && matchesLanguage(c) && matchesYear(c)) return true;
     return false;
   });
 
@@ -1283,6 +1317,10 @@ async function refreshCurrentList(){
 
     const languages = ['Todos os idiomas', ...new Set(newChannels.map(c=>c.language || 'Outro'))];
     document.getElementById('languageFilter').innerHTML = languages.map(l=>`<option value="${escapeHtml(l)}">${escapeHtml(l)}</option>`).join('');
+
+    const yearListR = [...new Set(newChannels.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
+    const yearsR = ['Todos os anos', ...yearListR];
+    document.getElementById('yearFilter').innerHTML = yearsR.map(y=>`<option value="${escapeHtml(y)}">${escapeHtml(y)}</option>`).join('');
 
     if(added.length > 0){
       document.getElementById('newBannerText').textContent = `✨ ${added.length} novo(s) item(ns) encontrado(s): ${added.slice(0,5).map(c=>c.name).join(', ')}${added.length>5?'...':''}`;
