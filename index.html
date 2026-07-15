@@ -64,7 +64,7 @@
 <body>
 
 <header>
-  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v15</span></h1>
+  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v16</span></h1>
   <div class="tabs">
     <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
     <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
@@ -1173,13 +1173,20 @@ async function onCompareList2Changed(){
     const movies = channels2.filter(c=>c.contentType==='movie').length;
     const series = channels2.filter(c=>c.contentType==='series').length;
 
-    const languageSet = new Set(channels2.filter(c=>c.contentType==='movie'||c.contentType==='series').map(c=>c.language || 'Outro'));
+    const languageSet = new Set(
+      channels2.filter(c=>c.contentType==='movie'||c.contentType==='series')
+        .map(c=>detectLanguage(c.group))
+    );
     const languages = ['', ...languageSet];
     document.getElementById('cmpLanguageFilter').innerHTML = languages.map(l =>
       `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
     ).join('');
 
-    const years = [...new Set(channels2.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
+    const years = [...new Set(
+      channels2.filter(c=>c.contentType==='movie'||c.contentType==='series')
+        .map(c=>extractYearFromTitle(c.name))
+        .filter(Boolean)
+    )].sort((a,b)=>b-a);
     document.getElementById('cmpYearFilter').innerHTML = ['', ...years].map(y =>
       `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
     ).join('');
@@ -1263,8 +1270,8 @@ async function runCompareLists(){
     if(c.contentType !== 'movie' && c.contentType !== 'series') return false;
     if(c.contentType === 'movie' && !includeMovies) return false;
     if(c.contentType === 'series' && !includeSeries) return false;
-    if(languageFilter && (c.language || 'Outro') !== languageFilter) return false;
-    if(yearFilter && c.year !== yearFilter) return false;
+    if(languageFilter && detectLanguage(c.group) !== languageFilter) return false;
+    if(yearFilter && extractYearFromTitle(c.name) !== yearFilter) return false;
     const norm = normalizeTitleForCompare(c.name);
     return !existingByType[c.contentType].has(norm);
   });
