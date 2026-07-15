@@ -236,7 +236,11 @@ http://..."></textarea>
           <span id="exportSelCount" style="font-size:12px;color:var(--muted)"></span>
         </div>
         <div id="exportList" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
-        <button class="primary" style="margin-top:10px" onclick="downloadSelectedExport()">Baixar M3U dos selecionados</button>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="primary" onclick="downloadSelectedExport()">⬇️ Baixar arquivo M3U</button>
+          <button class="ghost" onclick="copySelectedExport()">📋 Copiar conteúdo</button>
+          <button class="ghost" onclick="viewSelectedExport()">👁️ Ver como texto</button>
+        </div>
       </div>
     </div>
 
@@ -1093,22 +1097,22 @@ function updateExportSelCount(){
 }
 
 // Etapa 2: gera e baixa o M3U só com os itens marcados
-async function downloadSelectedExport(){
-  const statusEl = document.getElementById('exportStatus');
+// Monta o texto M3U a partir da seleção atual, buscando episódios de séries se necessário
+async function buildSelectedExportText(statusEl){
   const matched = state._exportMatched || [];
   const selectedIdx = Array.from(document.querySelectorAll('.expItemCheck:checked')).map(cb => parseInt(cb.dataset.idx));
   const selected = selectedIdx.map(i => matched[i]);
 
   if(selected.length === 0){
     statusEl.textContent = 'Selecione ao menos um item.';
-    return;
+    return null;
   }
 
   const movieEntries = selected.filter(c=>c.contentType === 'movie');
   const seriesEntries = selected.filter(c=>c.contentType === 'series');
 
   if(seriesEntries.length > 25){
-    if(!confirm(`${seriesEntries.length} séries selecionadas. Buscar os episódios de todas pode demorar um pouco. Continuar?`)) return;
+    if(!confirm(`${seriesEntries.length} séries selecionadas. Buscar os episódios de todas pode demorar um pouco. Continuar?`)) return null;
   }
 
   const lines = ['#EXTM3U'];
@@ -1142,7 +1146,15 @@ async function downloadSelectedExport(){
     }
   }
 
-  const blob = new Blob([lines.join('\n')], {type:'audio/x-mpegurl'});
+  return { text: lines.join('\n'), movieCount: movieEntries.length, seriesCount: seriesEntries.length };
+}
+
+async function downloadSelectedExport(){
+  const statusEl = document.getElementById('exportStatus');
+  const result = await buildSelectedExportText(statusEl);
+  if(!result) return;
+
+  const blob = new Blob([result.text], {type:'audio/x-mpegurl'});
   const url = URL.createObjectURL(blob);
   const a = document.createElement('a');
   const dateTag = new Date().toISOString().slice(0,10);
@@ -1153,7 +1165,37 @@ async function downloadSelectedExport(){
   a.remove();
   URL.revokeObjectURL(url);
 
-  statusEl.textContent = `Pronto! ${movieEntries.length} filme(s) e ${seriesEntries.length} série(s) exportados.`;
+  statusEl.textContent = `Baixado! ${result.movieCount} filme(s) e ${result.seriesCount} série(s) exportados.`;
+}
+
+async function copySelectedExport(){
+  const statusEl = document.getElementById('exportStatus');
+  const result = await buildSelectedExportText(statusEl);
+  if(!result) return;
+
+  try{
+    await navigator.clipboard.writeText(result.text);
+    statusEl.textContent = `Conteúdo copiado! (${result.movieCount} filme(s) e ${result.seriesCount} série(s)). Cole onde precisar.`;
+  }catch(e){
+    // fallback caso a área de transferência não esteja disponível
+    viewSelectedExportAsText(result.text);
+    statusEl.textContent = 'Não consegui copiar automaticamente — abri como texto para você copiar manualmente.';
+  }
+}
+
+function viewSelectedExportAsText(text){
+  const blob = new Blob([text], {type:'text/plain'});
+  const url = URL.createObjectURL(blob);
+  window.open(url, '_blank');
+  setTimeout(()=>URL.revokeObjectURL(url), 60000);
+}
+
+async function viewSelectedExport(){
+  const statusEl = document.getElementById('exportStatus');
+  const result = await buildSelectedExportText(statusEl);
+  if(!result) return;
+  viewSelectedExportAsText(result.text);
+  statusEl.textContent = `Aberto como texto numa nova aba (${result.movieCount} filme(s) e ${result.seriesCount} série(s)).`;
 }
 
 function copyChannelUrl(url){
