@@ -278,11 +278,13 @@ http://..."></textarea>
       <div class="row">
         <div>
           <label>Lista 1 (Receptora)</label>
-          <select id="cmpList1" onchange="onCompareListsChanged()"></select>
+          <select id="cmpList1" onchange="onCompareList1Changed()"></select>
+          <div id="cmp1Status" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
         </div>
         <div>
           <label>Lista 2 (Emissora)</label>
-          <select id="cmpList2" onchange="onCompareListsChanged()"></select>
+          <select id="cmpList2" onchange="onCompareList2Changed()"></select>
+          <div id="cmp2Status" style="font-size:11px;color:var(--muted);margin-top:4px"></div>
         </div>
       </div>
 
@@ -1146,13 +1148,31 @@ function populateCompareSelectors(){
   document.getElementById('cmpList2').innerHTML = opts || '<option value="">Nenhuma lista</option>';
   document.getElementById('comparePreview').classList.add('hidden');
   document.getElementById('compareStatus').textContent = '';
-  onCompareListsChanged();
+  onCompareList1Changed();
+  onCompareList2Changed();
 }
 
-async function onCompareListsChanged(){
-  const list2Id = document.getElementById('cmpList2').value;
-  if(!list2Id) return;
-  const channels2 = await storeGet(`lists:${list2Id}:channels`) || [];
+async function onCompareList1Changed(){
+  const id = document.getElementById('cmpList1').value;
+  const statusEl = document.getElementById('cmp1Status');
+  if(!id){ statusEl.textContent = ''; return; }
+  statusEl.textContent = 'Carregando...';
+  const channels = await storeGet(`lists:${id}:channels`) || [];
+  const movies = channels.filter(c=>c.contentType==='movie').length;
+  const series = channels.filter(c=>c.contentType==='series').length;
+  statusEl.textContent = `✓ Carregada: ${movies} filme(s), ${series} série(s)`;
+}
+
+async function onCompareList2Changed(){
+  const id = document.getElementById('cmpList2').value;
+  const statusEl = document.getElementById('cmp2Status');
+  if(!id){ statusEl.textContent = ''; return; }
+  statusEl.textContent = 'Carregando...';
+  const channels2 = await storeGet(`lists:${id}:channels`) || [];
+  const movies = channels2.filter(c=>c.contentType==='movie').length;
+  const series = channels2.filter(c=>c.contentType==='series').length;
+  statusEl.textContent = `✓ Carregada: ${movies} filme(s), ${series} série(s)`;
+
   const languages = ['', ...new Set(channels2.map(c=>c.language || 'Outro'))];
   document.getElementById('cmpLanguageFilter').innerHTML = languages.map(l =>
     `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
@@ -1161,7 +1181,7 @@ async function onCompareListsChanged(){
   document.getElementById('cmpYearFilter').innerHTML = ['', ...years].map(y =>
     `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
   ).join('');
-  state._cmpFiltersBuiltForListId = list2Id;
+  state._cmpFiltersBuiltForListId = id;
 }
 
 // Remove marcações de qualidade/idioma/ano e pontuação para comparar títulos com segurança,
@@ -1197,7 +1217,7 @@ async function runCompareLists(){
   // Garante que os filtros de idioma/ano estão sincronizados com a Lista 2 escolhida,
   // mesmo que o evento de troca do dropdown não tenha disparado corretamente.
   if(state._cmpFiltersBuiltForListId !== list2Id){
-    await onCompareListsChanged();
+    await onCompareList2Changed();
   }
 
   const includeMovies = document.getElementById('cmpMovies').checked;
