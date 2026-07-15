@@ -64,7 +64,7 @@
 <body>
 
 <header>
-  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v16</span></h1>
+  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v17</span></h1>
   <div class="tabs">
     <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
     <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
@@ -1213,6 +1213,13 @@ async function onCompareList2Changed(){
 function normalizeTitleForCompare(name){
   if(!name) return '';
   let n = name.toUpperCase();
+  // Remove tags de idioma embutidas no próprio título, ex: "¦PT¦", "|FR|", "-PT-",
+  // usando os mesmos símbolos configurados em "Configurar idiomas"
+  const delimClass = langSettings.delimiters.map(escapeRegexChar).join('');
+  if(delimClass){
+    const langTagRegex = new RegExp(`[${delimClass}]\\s*[A-Z]{2,3}\\s*[${delimClass}]?`, 'g');
+    n = n.replace(langTagRegex, ' ');
+  }
   n = n.replace(/\(.*?\)/g, ' ');
   n = n.replace(/\[.*?\]/g, ' ');
   n = n.replace(/\b(4K|FHD|HD|SD|UHD|VOST|VOSTFR|VF|VFF|VFQ|MULTI|DUAL|LEGENDADO|DUBLADO|LEG|DUB)\b/g, ' ');
