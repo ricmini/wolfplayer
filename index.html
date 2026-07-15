@@ -1161,6 +1161,7 @@ async function onCompareListsChanged(){
   document.getElementById('cmpYearFilter').innerHTML = ['', ...years].map(y =>
     `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
   ).join('');
+  state._cmpFiltersBuiltForListId = list2Id;
 }
 
 // Remove marcações de qualidade/idioma/ano e pontuação para comparar títulos com segurança,
@@ -1191,6 +1192,12 @@ async function runCompareLists(){
     statusEl.textContent = 'Escolha duas listas diferentes.';
     previewEl.classList.add('hidden');
     return;
+  }
+
+  // Garante que os filtros de idioma/ano estão sincronizados com a Lista 2 escolhida,
+  // mesmo que o evento de troca do dropdown não tenha disparado corretamente.
+  if(state._cmpFiltersBuiltForListId !== list2Id){
+    await onCompareListsChanged();
   }
 
   const includeMovies = document.getElementById('cmpMovies').checked;
