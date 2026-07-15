@@ -1168,20 +1168,32 @@ async function onCompareList2Changed(){
   const statusEl = document.getElementById('cmp2Status');
   if(!id){ statusEl.textContent = ''; return; }
   statusEl.textContent = 'Carregando...';
-  const channels2 = await storeGet(`lists:${id}:channels`) || [];
-  const movies = channels2.filter(c=>c.contentType==='movie').length;
-  const series = channels2.filter(c=>c.contentType==='series').length;
-  statusEl.textContent = `✓ Carregada: ${movies} filme(s), ${series} série(s)`;
+  try{
+    const channels2 = await storeGet(`lists:${id}:channels`) || [];
+    const movies = channels2.filter(c=>c.contentType==='movie').length;
+    const series = channels2.filter(c=>c.contentType==='series').length;
 
-  const languages = ['', ...new Set(channels2.map(c=>c.language || 'Outro'))];
-  document.getElementById('cmpLanguageFilter').innerHTML = languages.map(l =>
-    `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
-  ).join('');
-  const years = [...new Set(channels2.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
-  document.getElementById('cmpYearFilter').innerHTML = ['', ...years].map(y =>
-    `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
-  ).join('');
-  state._cmpFiltersBuiltForListId = id;
+    const languageSet = new Set(channels2.filter(c=>c.contentType==='movie'||c.contentType==='series').map(c=>c.language || 'Outro'));
+    const languages = ['', ...languageSet];
+    document.getElementById('cmpLanguageFilter').innerHTML = languages.map(l =>
+      `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
+    ).join('');
+
+    const years = [...new Set(channels2.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
+    document.getElementById('cmpYearFilter').innerHTML = ['', ...years].map(y =>
+      `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
+    ).join('');
+
+    let msg = `✓ Carregada: ${movies} filme(s), ${series} série(s)`;
+    const onlyOutro = languageSet.size <= 1 && (languageSet.size === 0 || languageSet.has('Outro'));
+    if(onlyOutro || years.length === 0){
+      msg += ' ⚠️ Nenhum idioma/ano detectado nos dados salvos desta lista — vá em "Minhas Listas", abra esta lista e toque em "🔄 Verificar novidades" para reprocessar, depois volte aqui.';
+    }
+    statusEl.textContent = msg;
+    state._cmpFiltersBuiltForListId = id;
+  }catch(e){
+    statusEl.textContent = 'Erro ao carregar: ' + e.message;
+  }
 }
 
 // Remove marcações de qualidade/idioma/ano e pontuação para comparar títulos com segurança,
