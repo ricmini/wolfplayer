@@ -64,7 +64,7 @@
 <body>
 
 <header>
-  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v14</span></h1>
+  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v15</span></h1>
   <div class="tabs">
     <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
     <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
@@ -1185,9 +1185,14 @@ async function onCompareList2Changed(){
     ).join('');
 
     let msg = `✓ Carregada: ${movies} filme(s), ${series} série(s)`;
-    const onlyOutro = languageSet.size <= 1 && (languageSet.size === 0 || languageSet.has('Outro'));
-    if(onlyOutro || years.length === 0){
-      msg += ' ⚠️ Nenhum idioma/ano detectado nos dados salvos desta lista — vá em "Minhas Listas", abra esta lista e toque em "🔄 Verificar novidades" para reprocessar, depois volte aqui.';
+    const noLanguages = languageSet.size === 0 || (languageSet.size === 1 && languageSet.has('Outro'));
+    const noYears = years.length === 0;
+    if(noLanguages && noYears){
+      msg += ' ⚠️ Nenhum idioma/ano detectado — vá em "Minhas Listas", abra esta lista e toque em "🔄 Verificar novidades", depois volte aqui.';
+    } else if(noLanguages){
+      msg += ' ⚠️ Nenhum idioma detectado nesta lista.';
+    } else if(noYears){
+      msg += ' ⚠️ Nenhum ano detectado nesta lista.';
     }
     statusEl.textContent = msg;
     state._cmpFiltersBuiltForListId = id;
