@@ -68,6 +68,7 @@
   <div class="tabs">
     <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
     <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
+    <button class="tab-btn" id="tab-compare" onclick="showView('compare')">Comparar Listas</button>
   </div>
 </header>
 
@@ -266,6 +267,65 @@ http://..."></textarea>
     <div class="grid" id="channelsGrid"></div>
   </div>
 
+  <!-- VIEW: COMPARAR LISTAS -->
+  <div id="view-compare" class="hidden">
+    <div class="card">
+      <h3 style="margin-top:0">Comparar Listas</h3>
+      <p style="font-size:12px;color:var(--muted);margin-top:-6px">
+        Encontra filmes/séries que existem na Lista 2 (emissora) mas ainda não existem na Lista 1 (receptora).
+      </p>
+
+      <div class="row">
+        <div>
+          <label>Lista 1 (Receptora)</label>
+          <select id="cmpList1" onchange="onCompareListsChanged()"></select>
+        </div>
+        <div>
+          <label>Lista 2 (Emissora)</label>
+          <select id="cmpList2" onchange="onCompareListsChanged()"></select>
+        </div>
+      </div>
+
+      <div class="row" style="margin-top:8px">
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text)"><input type="checkbox" id="cmpMovies" checked> Incluir Filmes</label>
+        <label style="display:flex;align-items:center;gap:6px;color:var(--text)"><input type="checkbox" id="cmpSeries" checked> Incluir Séries</label>
+      </div>
+
+      <div class="row">
+        <div>
+          <label>Idioma (na Lista 2)</label>
+          <select id="cmpLanguageFilter"><option value="">Todos os idiomas</option></select>
+        </div>
+        <div>
+          <label>Ano (na Lista 2)</label>
+          <select id="cmpYearFilter"><option value="">Todos os anos</option></select>
+        </div>
+      </div>
+
+      <label style="display:flex;align-items:center;gap:6px;color:var(--text);margin-top:8px">
+        <input type="checkbox" id="cmpStripYear" checked> Remover ano do título ao exportar
+      </label>
+
+      <button class="primary" style="margin-top:12px" onclick="runCompareLists()">🔍 Comparar</button>
+      <div id="compareStatus" style="font-size:12px;color:var(--muted);margin-top:8px"></div>
+
+      <div id="comparePreview" class="hidden" style="margin-top:12px">
+        <div style="display:flex;align-items:center;gap:10px;margin-bottom:8px">
+          <label style="font-size:12px;color:var(--text);display:flex;align-items:center;gap:6px">
+            <input type="checkbox" id="cmpSelectAll" checked onchange="toggleAllCompareSelection()"> Selecionar todos
+          </label>
+          <span id="compareSelCount" style="font-size:12px;color:var(--muted)"></span>
+        </div>
+        <div id="compareList" style="max-height:320px;overflow-y:auto;border:1px solid var(--border);border-radius:8px;padding:6px"></div>
+        <div style="display:flex;gap:8px;flex-wrap:wrap;margin-top:10px">
+          <button class="primary" onclick="downloadCompareExport()">⬇️ Baixar arquivo M3U</button>
+          <button class="ghost" onclick="copyCompareExport()">📋 Copiar conteúdo</button>
+          <button class="ghost" onclick="viewCompareExport()">👁️ Ver como texto</button>
+        </div>
+      </div>
+    </div>
+  </div>
+
 </main>
 
 <script>
@@ -435,9 +495,12 @@ function showView(name){
   document.getElementById('view-add').classList.toggle('hidden', name!=='add');
   document.getElementById('view-lists').classList.toggle('hidden', name!=='lists');
   document.getElementById('view-channels').classList.toggle('hidden', name!=='channels');
+  document.getElementById('view-compare').classList.toggle('hidden', name!=='compare');
   document.getElementById('tab-lists').classList.toggle('active', name==='lists');
   document.getElementById('tab-add').classList.toggle('active', name==='add');
+  document.getElementById('tab-compare').classList.toggle('active', name==='compare');
   if(name==='lists') renderListsView();
+  if(name==='compare') populateCompareSelectors();
 }
 
 function updateAddForm(){
@@ -1076,6 +1139,222 @@ function m3uEscape(name){
 }
 
 // Remove padrões de ano tipo "(2026)", "[2026]" ou "2026" no final do título
+// ---------- Comparar Listas ----------
+function populateCompareSelectors(){
+  const opts = state.lists.map(l => `<option value="${l.id}">${escapeHtml(l.name)}</option>`).join('');
+  document.getElementById('cmpList1').innerHTML = opts || '<option value="">Nenhuma lista</option>';
+  document.getElementById('cmpList2').innerHTML = opts || '<option value="">Nenhuma lista</option>';
+  document.getElementById('comparePreview').classList.add('hidden');
+  document.getElementById('compareStatus').textContent = '';
+  onCompareListsChanged();
+}
+
+async function onCompareListsChanged(){
+  const list2Id = document.getElementById('cmpList2').value;
+  if(!list2Id) return;
+  const channels2 = await storeGet(`lists:${list2Id}:channels`) || [];
+  const languages = ['', ...new Set(channels2.map(c=>c.language || 'Outro'))];
+  document.getElementById('cmpLanguageFilter').innerHTML = languages.map(l =>
+    `<option value="${escapeHtml(l)}">${l ? escapeHtml(l) : 'Todos os idiomas'}</option>`
+  ).join('');
+  const years = [...new Set(channels2.filter(c=>c.year).map(c=>c.year))].sort((a,b)=>b-a);
+  document.getElementById('cmpYearFilter').innerHTML = ['', ...years].map(y =>
+    `<option value="${escapeHtml(y)}">${y ? escapeHtml(y) : 'Todos os anos'}</option>`
+  ).join('');
+}
+
+// Remove marcações de qualidade/idioma/ano e pontuação para comparar títulos com segurança,
+// mesmo quando a Lista 1 usa prefixos diferentes da Lista 2.
+function normalizeTitleForCompare(name){
+  if(!name) return '';
+  let n = name.toUpperCase();
+  n = n.replace(/\(.*?\)/g, ' ');
+  n = n.replace(/\[.*?\]/g, ' ');
+  n = n.replace(/\b(4K|FHD|HD|SD|UHD|VOST|VOSTFR|VF|VFF|VFQ|MULTI|DUAL|LEGENDADO|DUBLADO|LEG|DUB)\b/g, ' ');
+  n = n.replace(/[^A-Z0-9 ]/g, ' ');
+  n = n.replace(/\s{2,}/g, ' ').trim();
+  return n;
+}
+
+async function runCompareLists(){
+  const statusEl = document.getElementById('compareStatus');
+  const previewEl = document.getElementById('comparePreview');
+  const list1Id = document.getElementById('cmpList1').value;
+  const list2Id = document.getElementById('cmpList2').value;
+
+  if(!list1Id || !list2Id){
+    statusEl.textContent = 'Escolha as duas listas.';
+    previewEl.classList.add('hidden');
+    return;
+  }
+  if(list1Id === list2Id){
+    statusEl.textContent = 'Escolha duas listas diferentes.';
+    previewEl.classList.add('hidden');
+    return;
+  }
+
+  const includeMovies = document.getElementById('cmpMovies').checked;
+  const includeSeries = document.getElementById('cmpSeries').checked;
+  if(!includeMovies && !includeSeries){
+    statusEl.textContent = 'Selecione ao menos um tipo (Filmes ou Séries).';
+    previewEl.classList.add('hidden');
+    return;
+  }
+  const languageFilter = document.getElementById('cmpLanguageFilter').value;
+  const yearFilter = document.getElementById('cmpYearFilter').value;
+
+  statusEl.textContent = 'Carregando listas...';
+  const channels1 = await storeGet(`lists:${list1Id}:channels`) || [];
+  const channels2 = await storeGet(`lists:${list2Id}:channels`) || [];
+
+  // Mapa da Lista 1: por tipo de conteúdo -> conjunto de títulos normalizados já existentes
+  const existingByType = { movie: new Set(), series: new Set() };
+  channels1.forEach(c=>{
+    if(c.contentType === 'movie' || c.contentType === 'series'){
+      existingByType[c.contentType].add(normalizeTitleForCompare(c.name));
+    }
+  });
+
+  const missing = channels2.filter(c=>{
+    if(c.contentType !== 'movie' && c.contentType !== 'series') return false;
+    if(c.contentType === 'movie' && !includeMovies) return false;
+    if(c.contentType === 'series' && !includeSeries) return false;
+    if(languageFilter && (c.language || 'Outro') !== languageFilter) return false;
+    if(yearFilter && c.year !== yearFilter) return false;
+    const norm = normalizeTitleForCompare(c.name);
+    return !existingByType[c.contentType].has(norm);
+  });
+
+  if(missing.length === 0){
+    statusEl.textContent = 'Nenhuma diferença encontrada com esses filtros (tudo da Lista 2 já existe na Lista 1).';
+    previewEl.classList.add('hidden');
+    return;
+  }
+
+  state._compareMatched = missing;
+  state._compareList2Id = list2Id;
+  statusEl.textContent = '';
+
+  const typeIcon = {movie:'🎬', series:'📺'};
+  document.getElementById('compareList').innerHTML = missing.map((c, idx) => {
+    const dateStr = c.addedAt ? new Date(c.addedAt).toLocaleDateString('pt-BR') : '';
+    return `
+      <label style="display:flex;align-items:center;gap:8px;padding:6px 4px;border-bottom:1px solid var(--border);font-size:13px;color:var(--text)">
+        <input type="checkbox" class="cmpItemCheck" data-idx="${idx}" checked onchange="updateCompareSelCount()">
+        <span style="flex:1">${typeIcon[c.contentType]||''} ${escapeHtml(c.name)} <span style="color:var(--muted);font-size:11px">(${escapeHtml(c.group)}${dateStr ? ' · '+dateStr : ''})</span></span>
+      </label>`;
+  }).join('');
+
+  document.getElementById('cmpSelectAll').checked = true;
+  previewEl.classList.remove('hidden');
+  updateCompareSelCount();
+}
+
+function toggleAllCompareSelection(){
+  const checked = document.getElementById('cmpSelectAll').checked;
+  document.querySelectorAll('.cmpItemCheck').forEach(cb => cb.checked = checked);
+  updateCompareSelCount();
+}
+
+function updateCompareSelCount(){
+  const total = document.querySelectorAll('.cmpItemCheck').length;
+  const checked = document.querySelectorAll('.cmpItemCheck:checked').length;
+  document.getElementById('compareSelCount').textContent = `${checked} de ${total} selecionado(s)`;
+}
+
+async function buildCompareExportText(statusEl){
+  const matched = state._compareMatched || [];
+  const selectedIdx = Array.from(document.querySelectorAll('.cmpItemCheck:checked')).map(cb => parseInt(cb.dataset.idx));
+  const selected = selectedIdx.map(i => matched[i]);
+
+  if(selected.length === 0){
+    statusEl.textContent = 'Selecione ao menos um item.';
+    return null;
+  }
+
+  const stripYear = document.getElementById('cmpStripYear').checked;
+  const cleanTitle = (name) => stripYear ? stripYearFromTitle(name) : name;
+  const movieEntries = selected.filter(c=>c.contentType === 'movie');
+  const seriesEntries = selected.filter(c=>c.contentType === 'series');
+
+  if(seriesEntries.length > 25){
+    if(!confirm(`${seriesEntries.length} séries selecionadas. Buscar os episódios de todas pode demorar um pouco. Continuar?`)) return null;
+  }
+
+  const lines = ['#EXTM3U'];
+  movieEntries.forEach(c=>{
+    lines.push(`#EXTINF:-1 tvg-logo="${c.logo||''}" group-title="${m3uEscape(c.group)}",${m3uEscape(cleanTitle(c.name))}`);
+    lines.push(c.url);
+  });
+
+  if(seriesEntries.length > 0){
+    const list2 = state.lists.find(l=>l.id === state._compareList2Id);
+    if(!list2 || list2.source.type !== 'xtream'){
+      lines.push(`# Não foi possível buscar episódios de séries: a Lista 2 não é uma lista Xtream Codes.`);
+    } else {
+      const { host, user, pass, userAgent } = list2.source;
+      let done = 0;
+      for(const s of seriesEntries){
+        done++;
+        statusEl.textContent = `Buscando episódios... (${done}/${seriesEntries.length}) ${s.name}`;
+        try{
+          const info = await fetchXtreamJson(host, user, pass, 'get_series_info', userAgent, `&series_id=${s.seriesId}`);
+          const seasons = info.episodes || {};
+          Object.keys(seasons).forEach(seasonNum=>{
+            seasons[seasonNum].forEach(ep=>{
+              const epUrl = `${host.replace(/\/+$/,'')}/series/${encodeURIComponent(user)}/${encodeURIComponent(pass)}/${ep.id}.${ep.container_extension || 'mp4'}`;
+              const epName = `${cleanTitle(s.name)} - S${String(seasonNum).padStart(2,'0')}E${String(ep.episode_num).padStart(2,'0')} - ${ep.title||''}`;
+              lines.push(`#EXTINF:-1 tvg-logo="${s.logo||''}" group-title="${m3uEscape(s.group)}",${m3uEscape(epName)}`);
+              lines.push(epUrl);
+            });
+          });
+        }catch(e){
+          lines.push(`# Falha ao buscar episódios de "${s.name}": ${e.message}`);
+        }
+      }
+    }
+  }
+
+  return { text: lines.join('\n'), movieCount: movieEntries.length, seriesCount: seriesEntries.length };
+}
+
+async function downloadCompareExport(){
+  const statusEl = document.getElementById('compareStatus');
+  const result = await buildCompareExportText(statusEl);
+  if(!result) return;
+  const blob = new Blob([result.text], {type:'audio/x-mpegurl'});
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `comparacao_${new Date().toISOString().slice(0,10)}.m3u`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+  URL.revokeObjectURL(url);
+  statusEl.textContent = `Baixado! ${result.movieCount} filme(s) e ${result.seriesCount} série(s).`;
+}
+
+async function copyCompareExport(){
+  const statusEl = document.getElementById('compareStatus');
+  const result = await buildCompareExportText(statusEl);
+  if(!result) return;
+  try{
+    await navigator.clipboard.writeText(result.text);
+    statusEl.textContent = `Conteúdo copiado! (${result.movieCount} filme(s) e ${result.seriesCount} série(s))`;
+  }catch(e){
+    viewSelectedExportAsText(result.text);
+    statusEl.textContent = 'Não consegui copiar automaticamente — abri como texto para você copiar manualmente.';
+  }
+}
+
+async function viewCompareExport(){
+  const statusEl = document.getElementById('compareStatus');
+  const result = await buildCompareExportText(statusEl);
+  if(!result) return;
+  viewSelectedExportAsText(result.text);
+  statusEl.textContent = `Aberto como texto numa nova aba (${result.movieCount} filme(s) e ${result.seriesCount} série(s)).`;
+}
+
 function stripYearFromTitle(name){
   if(!name) return name;
   return name
