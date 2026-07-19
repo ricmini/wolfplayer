@@ -64,7 +64,7 @@
 <body>
 
 <header>
-  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v17</span></h1>
+  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v18</span></h1>
   <div class="tabs">
     <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
     <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
@@ -135,6 +135,9 @@ http://..."></textarea>
 
   <!-- VIEW: LISTS -->
   <div id="view-lists">
+    <div id="globalUpdateBanner" class="banner hidden" style="margin-bottom:12px">
+      <span id="globalUpdateText"></span>
+    </div>
     <div class="card">
       <h3 style="margin-top:0">Listas salvas</h3>
       <div id="listsContainer"><p class="empty">Nenhuma lista ainda. Clique em "Adicionar Lista".</p></div>
@@ -489,6 +492,7 @@ async function init(){
   const idx = await storeGet('lists:index');
   state.lists = idx || [];
   renderListsView();
+  autoRefreshAllLists(); // roda em segundo plano, sem bloquear a exibição inicial
 }
 init();
 
@@ -905,9 +909,10 @@ function renderListsView(){
     div.className = 'list-item';
     div.onclick = ()=>openList(list.id);
     const typeLabel = list.source.type === 'xtream' ? 'Xtream Codes' : (list.source.type === 'm3uUrl' ? 'M3U (URL)' : 'M3U (colado)');
+    const newBadge = list.pendingNewCount ? `<span class="badge">+${list.pendingNewCount} novo(s)</span>` : '';
     div.innerHTML = `
       <div class="meta">
-        <b>${escapeHtml(list.name)}</b>
+        <b>${escapeHtml(list.name)} ${newBadge}</b>
         <span>${typeLabel} · ${list.channelCount} canais · atualizado ${timeAgo(list.lastUpdated)}</span>
       </div>
     `;
@@ -931,6 +936,11 @@ function timeAgo(ts){
 // ---------- Open list / channels view ----------
 async function openList(id){
   state.currentListId = id;
+  const list = state.lists.find(l=>l.id === id);
+  if(list && list.pendingNewCount){
+    delete list.pendingNewCount;
+    storeSet('lists:index', state.lists);
+  }
   const channels = await storeGet(`lists:${id}:channels`) || [];
   state.currentChannels = channels;
   state.newKeys = new Set(channels.filter(c=>c._isNew).map(c=>c.key));
@@ -1607,6 +1617,39 @@ function copyChannelUrl(url){
 }
 
 // ---------- Refresh / detect new content ----------
+// Busca dados atualizados de uma lista e calcula o que é novo, sem mexer na UI.
+// Reutilizada tanto pelo botão manual "Verificar novidades" quanto pela verificação automática.
+async function fetchFreshDataForList(list, onProgress){
+  let newChannels;
+  if(list.source.type === 'm3uUrl'){
+    const text = await fetchAsText(list.source.url, list.source.userAgent);
+    newChannels = parseM3U(text);
+  } else if(list.source.type === 'xtream'){
+    try{
+      newChannels = await fetchXtreamFull(list.source.host, list.source.user, list.source.pass, list.source.userAgent, onProgress);
+      if(newChannels.length === 0) throw new Error('sem conteúdo');
+    }catch(apiErr){
+      const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
+      const text = await fetchAsText(url, list.source.userAgent);
+      newChannels = parseM3U(text);
+    }
+  } else {
+    return null; // listas coladas manualmente não podem ser verificadas automaticamente
+  }
+
+  const warnings = newChannels._warnings || [];
+  const oldChannels = await storeGet(`lists:${list.id}:channels`) || [];
+  const oldKeys = new Set(oldChannels.map(c=>c.key));
+  const added = newChannels.filter(c=>!oldKeys.has(c.key));
+  newChannels.forEach(c=>{ c._isNew = added.some(a=>a.key===c.key); });
+
+  await storeSet(`lists:${list.id}:channels`, newChannels);
+  list.lastUpdated = Date.now();
+  list.channelCount = newChannels.length;
+
+  return { newChannels, added, warnings };
+}
+
 async function refreshCurrentList(){
   const list = state.lists.find(l=>l.id === state.currentListId);
   if(!list) return;
@@ -1616,37 +1659,15 @@ async function refreshCurrentList(){
   const onProgress = (msg) => { btn.innerHTML = `<span class="spinner"></span> ${msg}`; };
 
   try{
-    let newChannels;
-    if(list.source.type === 'm3uUrl'){
-      const text = await fetchAsText(list.source.url, list.source.userAgent);
-      newChannels = parseM3U(text);
-    } else if(list.source.type === 'xtream'){
-      try{
-        newChannels = await fetchXtreamFull(list.source.host, list.source.user, list.source.pass, list.source.userAgent, onProgress);
-        if(newChannels.length === 0) throw new Error('sem conteúdo');
-      }catch(apiErr){
-        const url = buildXtreamM3U(list.source.host, list.source.user, list.source.pass);
-        const text = await fetchAsText(url, list.source.userAgent);
-        newChannels = parseM3U(text);
-      }
-    } else {
+    const result = await fetchFreshDataForList(list, onProgress);
+    if(!result){
       alert('Listas coladas manualmente não podem ser verificadas automaticamente. Adicione novamente colando o conteúdo atualizado.');
-      btn.disabled = false; btn.textContent = '🔄 Verificar novidades';
       return;
     }
-
-    const warnings = newChannels._warnings || [];
-    const oldKeys = new Set(state.currentChannels.map(c=>c.key));
-    const added = newChannels.filter(c=>!oldKeys.has(c.key));
-
-    newChannels.forEach(c=>{ c._isNew = added.some(a=>a.key===c.key); });
+    const { newChannels, added, warnings } = result;
 
     state.currentChannels = newChannels;
     state.newKeys = new Set(added.map(c=>c.key));
-
-    await storeSet(`lists:${list.id}:channels`, newChannels);
-    list.lastUpdated = Date.now();
-    list.channelCount = newChannels.length;
     await storeSet('lists:index', state.lists);
 
     const groups = ['Todos', ...new Set(newChannels.map(c=>c.group))];
@@ -1674,6 +1695,46 @@ async function refreshCurrentList(){
     btn.textContent = '🔄 Verificar novidades';
   }
 }
+
+// Verifica automaticamente todas as listas Xtream/URL ao abrir o app, sem precisar de toque manual
+async function autoRefreshAllLists(){
+  const refreshable = state.lists.filter(l => l.source.type === 'xtream' || l.source.type === 'm3uUrl');
+  if(refreshable.length === 0) return;
+
+  const bannerEl = document.getElementById('globalUpdateBanner');
+  const textEl = document.getElementById('globalUpdateText');
+  bannerEl.classList.remove('hidden');
+
+  let totalAdded = 0;
+  const listsWithNews = [];
+
+  for(let i=0;i<refreshable.length;i++){
+    const list = refreshable[i];
+    textEl.textContent = `Verificando listas... (${i+1}/${refreshable.length}) ${list.name}`;
+    try{
+      const result = await fetchFreshDataForList(list);
+      if(result && result.added.length > 0){
+        totalAdded += result.added.length;
+        listsWithNews.push({ name: list.name, count: result.added.length });
+        list.pendingNewCount = result.added.length;
+      }
+    }catch(e){
+      console.error('Falha ao verificar lista', list.name, e);
+    }
+  }
+
+  await storeSet('lists:index', state.lists);
+
+  if(totalAdded > 0){
+    const details = listsWithNews.map(l => `${l.name} (+${l.count})`).join(', ');
+    textEl.innerHTML = `✨ ${totalAdded} novo(s) item(ns) desde a última visita: ${details}`;
+  } else {
+    bannerEl.classList.add('hidden');
+  }
+  renderListsView();
+}
+
+
 
 function dismissNewBanner(){
   document.getElementById('newBanner').classList.add('hidden');
