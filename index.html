@@ -64,7 +64,7 @@
 <body>
 
 <header>
-  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v18</span></h1>
+  <h1>📺 IPTV Player <span style="font-size:10px;color:var(--muted);font-weight:400">build v19</span></h1>
   <div class="tabs">
     <button class="tab-btn active" id="tab-lists" onclick="showView('lists')">Minhas Listas</button>
     <button class="tab-btn" id="tab-add" onclick="showView('add')">Adicionar Lista</button>
@@ -1271,9 +1271,34 @@ async function runCompareLists(){
   const languageFilter = document.getElementById('cmpLanguageFilter').value;
   const yearFilter = document.getElementById('cmpYearFilter').value;
 
-  statusEl.textContent = 'Carregando listas...';
-  const channels1 = await storeGet(`lists:${list1Id}:channels`) || [];
-  const channels2 = await storeGet(`lists:${list2Id}:channels`) || [];
+  statusEl.textContent = 'Buscando dados atualizados da Lista 1...';
+  const list1 = state.lists.find(l=>l.id === list1Id);
+  const list2 = state.lists.find(l=>l.id === list2Id);
+  let channels1, channels2;
+
+  try{
+    if(list1.source.type === 'xtream' || list1.source.type === 'm3uUrl'){
+      const onProgress1 = (msg) => { statusEl.textContent = `Lista 1: ${msg}`; };
+      const result1 = await fetchFreshDataForList(list1, onProgress1);
+      channels1 = result1 ? result1.newChannels : (await storeGet(`lists:${list1Id}:channels`) || []);
+    } else {
+      channels1 = await storeGet(`lists:${list1Id}:channels`) || [];
+    }
+
+    statusEl.textContent = 'Buscando dados atualizados da Lista 2...';
+    if(list2.source.type === 'xtream' || list2.source.type === 'm3uUrl'){
+      const onProgress2 = (msg) => { statusEl.textContent = `Lista 2: ${msg}`; };
+      const result2 = await fetchFreshDataForList(list2, onProgress2);
+      channels2 = result2 ? result2.newChannels : (await storeGet(`lists:${list2Id}:channels`) || []);
+    } else {
+      channels2 = await storeGet(`lists:${list2Id}:channels`) || [];
+    }
+    await storeSet('lists:index', state.lists);
+  }catch(e){
+    statusEl.textContent = 'Erro ao buscar dados atualizados: ' + e.message + ' — usando o que já estava salvo.';
+    channels1 = await storeGet(`lists:${list1Id}:channels`) || [];
+    channels2 = await storeGet(`lists:${list2Id}:channels`) || [];
+  }
 
   // Mapa da Lista 1: por tipo de conteúdo -> conjunto de títulos normalizados já existentes
   const existingByType = { movie: new Set(), series: new Set() };
